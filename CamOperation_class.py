@@ -437,6 +437,7 @@ class CameraOperation:
                             # cv2.imwrite("original.jpg", image_bgr)
                             image_bgr = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
                             image_bgr = cv2.flip(image_bgr,0)
+                            image_bgr = cv2.flip(image_bgr, 1)
                             # 產生時間戳記檔名
                             save_dir = r"C:\Users\user1\Desktop\Yolov11\NIRcam\BasicDemo\savefile"
                             # 取得今天日期 (例如 20250917)
@@ -454,7 +455,7 @@ class CameraOperation:
                             filename = os.path.join(save_dir, f"image_{timestamp}.jpg")
 
                             cv2.imwrite(filename, image_bgr)
-                            results = detect_objects(ai_model, image_bgr, conf_thres=0.6)
+                            results = detect_objects(ai_model, image_bgr, conf_thres=0.4)
     
                             # 發送辨識結果到 TCP 服務器
                             if get_tcp_server is not None:

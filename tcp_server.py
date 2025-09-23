@@ -21,27 +21,12 @@ class TCPServer:
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            
-            # 如果host是'0.0.0.0'，則監聽所有網路介面
-            # 如果host是具體IP，則只監聽該介面
-            if self.host == '0.0.0.0':
-                print(f"Binding to all network interfaces on port {self.port}")
-            else:
-                print(f"Binding to specific interface {self.host}:{self.port}")
-            
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen(1)
             self.is_running = True
             
-            # 顯示本機所有可用的IP地址
-            import socket as sock
-            hostname = sock.gethostname()
-            local_ip = sock.gethostbyname(hostname)
-            print(f"TCP Server started successfully!")
-            print(f"Local IP: {local_ip}:{self.port}")
-            print(f"Listening on: {self.host}:{self.port}")
+            print(f"TCP Server started on {self.host}:{self.port}")
             print("Waiting for LabVIEW client connection...")
-            print("=" * 50)
             
             # 在新線程中等待連接
             self.server_thread = threading.Thread(target=self._wait_for_connection)
@@ -52,10 +37,6 @@ class TCPServer:
             
         except Exception as e:
             print(f"Failed to start TCP server: {e}")
-            print("常見解決方案:")
-            print("1. 使用 '0.0.0.0' 監聽所有網路介面")
-            print("2. 檢查指定的IP是否為本機IP")
-            print("3. 確認埠號未被其他程式占用")
             return False
     
     def _wait_for_connection(self):
@@ -167,6 +148,85 @@ class TCPServer:
                         label = message_parts[idx]
                         x1, y1, x2, y2 = message_parts[idx+1:idx+5]
                         print(f"  Object {i+1}: Label={label}, BBox=({x1},{y1})-({x2},{y2}) pixels")
+                else:
+                    print(f"Sent to LabVIEW: Trigger {self.trigger_count}, Image({image_width}x{image_height}), no objects detected")
+                print(f"Raw message: {message.strip()}")
+                return True
+            else:
+                return False
+                    
+        except Exception as e:
+            print(f"Error sending detection result: {e}")
+            return False
+    
+    def send_detection_result_with_center_and_size(self, detections, image_width, image_height):
+        """發送辨識結果到LabVIEW (中心點+寬高格式)
+        
+        格式: trigger_num,照片寬度,照片高度,物件數量,label1,center_x,center_y,width,height,label2,center_x,center_y,width,height,...,結尾4個點(0,0,0,0)
+        """
+        self.trigger_count += 1
+        
+        if not self.is_connected:
+            print("No LabVIEW client connected")
+            return False
+        
+        try:
+            detection_data = []
+            object_count = 0
+            
+            if detections and len(detections) > 0:
+                # 有檢測到物件
+                for detection in detections:
+                    if hasattr(detection, 'boxes') and detection.boxes is not None:
+                        boxes = detection.boxes.xyxy.cpu().numpy()  # (x1, y1, x2, y2)
+                        confs = detection.boxes.conf.cpu().numpy()
+                        classes = detection.boxes.cls.cpu().numpy()
+                        
+                        for (box, conf, cls) in zip(boxes, confs, classes):
+                            x1, y1, x2, y2 = box
+                            
+                            # 計算中心點和寬高 (像素座標)
+                            center_x = int((x1 + x2) / 2)
+                            center_y = int((y1 + y2) / 2)
+                            width = int(x2 - x1)
+                            height = int(y2 - y1)
+                            
+                            # 確保座標在圖像範圍內
+                            center_x = max(0, min(center_x, image_width - 1))
+                            center_y = max(0, min(center_y, image_height - 1))
+                            
+                            # 添加物件資料: label,center_x,center_y,width,height
+                            detection_data.extend([
+                                int(cls),      # label
+                                center_x,      # 中心點x座標(像素)
+                                center_y,      # 中心點y座標(像素)
+                                width,         # 寬度(像素)
+                                height         # 高度(像素)
+                            ])
+                            object_count += 1
+            
+            # 構建訊息
+            message_parts = [
+                self.trigger_count,     # 觸發編號
+                image_width,            # 照片寬度(像素)
+                image_height,           # 照片高度(像素) 
+                object_count            # 物件數量
+            ]
+            message_parts.extend(detection_data)    # 物件資料
+            message_parts.extend([0, 0, 0, 0])      # 結尾4個點
+            
+            # 轉換成字串
+            message = ",".join(map(str, message_parts)) + "\n"
+            
+            if self.send_message(message):
+                if object_count > 0:
+                    print(f"Sent to LabVIEW: Trigger {self.trigger_count}, Image({image_width}x{image_height}), {object_count} objects detected")
+                    # 顯示每個物件的像素座標
+                    for i in range(object_count):
+                        idx = 4 + i * 5  # 跳過trigger_num, width, height, count
+                        label = message_parts[idx]
+                        center_x, center_y, width, height = message_parts[idx+1:idx+5]
+                        print(f"  Object {i+1}: Label={label}, Center=({center_x},{center_y}), Size={width}x{height} pixels")
                 else:
                     print(f"Sent to LabVIEW: Trigger {self.trigger_count}, Image({image_width}x{image_height}), no objects detected")
                 print(f"Raw message: {message.strip()}")
