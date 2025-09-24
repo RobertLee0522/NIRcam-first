@@ -13,6 +13,7 @@ from tcp_server import start_tcp_server, get_tcp_server, stop_tcp_server
 import sys
 import numpy as np
 import cv2
+from CamOperation_class import set_ai_model, set_ai_parameters_func
 
 # --- 新增: 用於跨執行緒通訊的訊號發射器 ---
 class SignalEmitter(QObject):
@@ -25,6 +26,10 @@ class SignalEmitter(QObject):
 ai_model = load_model(r"C:\Users\user1\Desktop\Yolov11\train20\weights\best.pt")
 from CamOperation_class import set_ai_model
 set_ai_model(ai_model)
+
+# 新增全域變數用於控制 AI 檢測參數
+ai_conf_thres = 0.4  # 默認信心指數閾值
+ai_imgsz = 1280      # 默認影像大小
 
 def TxtWrapBy(start_str, end, all):
     start = all.find(start_str)
@@ -131,6 +136,56 @@ if __name__ == "__main__":
             else:
                 QMessageBox.warning(mainWindow, "AI 模型", "模型載入失敗！")
 
+    def update_ai_parameters():
+        """更新AI檢測參數"""
+        global ai_conf_thres, ai_imgsz
+        
+        try:
+            # 獲取信心指數閾值 (0.0 - 1.0)
+            conf_value = float(ui.edtConfThres.text())
+            if 0.0 <= conf_value <= 1.0:
+                ai_conf_thres = conf_value
+            else:
+                QMessageBox.warning(mainWindow, "參數錯誤", "信心指數必須介於 0.0 到 1.0 之間！")
+                ui.edtConfThres.setText(str(ai_conf_thres))
+                return
+            
+            # 獲取影像大小 (建議值: 320, 640, 1280)
+            imgsz_value = int(ui.edtImgSize.text())
+            if imgsz_value > 0 and imgsz_value % 32 == 0:  # YOLO要求是32的倍數
+                ai_imgsz = imgsz_value
+            else:
+                QMessageBox.warning(mainWindow, "參數錯誤", "影像大小必須是正數且為32的倍數！\n建議值: 320, 640, 1280")
+                ui.edtImgSize.setText(str(ai_imgsz))
+                return
+                
+            QMessageBox.information(mainWindow, "參數更新", 
+                f"AI檢測參數已更新：\n信心指數: {ai_conf_thres}\n影像大小: {ai_imgsz}")
+            
+            # 更新顯示的當前參數
+            update_ai_param_display()
+            
+        except ValueError:
+            QMessageBox.warning(mainWindow, "參數錯誤", "請輸入有效的數值！")
+
+    def reset_ai_parameters():
+        """重設AI檢測參數為預設值"""
+        global ai_conf_thres, ai_imgsz
+        ai_conf_thres = 0.4
+        ai_imgsz = 1280
+        ui.edtConfThres.setText(str(ai_conf_thres))
+        ui.edtImgSize.setText(str(ai_imgsz))
+        update_ai_param_display()
+        QMessageBox.information(mainWindow, "參數重設", "AI檢測參數已重設為預設值！")
+
+    def update_ai_param_display():
+        """更新顯示目前的AI參數"""
+        ui.lblCurrentParams.setText(f"目前參數 - 信心指數: {ai_conf_thres}, 影像大小: {ai_imgsz}")
+
+    def get_ai_parameters():
+        """供其他模組使用的函數，回傳目前的AI參數"""
+        return ai_conf_thres, ai_imgsz
+
     def start_tcp_server_func():
         """啟動TCP伺服器"""
         try:
@@ -209,7 +264,7 @@ if __name__ == "__main__":
 
     def start_grabbing():
         global obj_cam_operation, isGrabbing, signals
-        # 修改: 傳遞 signals 物件，而不是 winId
+        # 修改: 傳送 signals 物件，而不是 winId
         ret = obj_cam_operation.Start_grabbing(signals)
         if ret != 0:
             strError = "Start grabbing failed ret:" + ToHexStr(ret)
@@ -356,6 +411,43 @@ if __name__ == "__main__":
     detection_display_group.setLayout(detection_display_layout)
     main_tcp_layout.addWidget(detection_display_group)
 
+    # === 新增 AI 檢測參數控制區 ===
+    ai_param_group = QGroupBox("AI 檢測參數設定")
+    ai_param_layout = QVBoxLayout()
+    
+    # 參數輸入區
+    param_input_layout = QHBoxLayout()
+    param_input_layout.addWidget(QLabel("信心指數 (0.0-1.0):"))
+    ui.edtConfThres = QLineEdit(str(ai_conf_thres))
+    ui.edtConfThres.setMaximumWidth(80)
+    param_input_layout.addWidget(ui.edtConfThres)
+    
+    param_input_layout.addWidget(QLabel("影像大小:"))
+    ui.edtImgSize = QLineEdit(str(ai_imgsz))
+    ui.edtImgSize.setMaximumWidth(80)
+    param_input_layout.addWidget(ui.edtImgSize)
+    
+    ui.bnUpdateAIParams = QPushButton("更新參數")
+    ui.bnResetAIParams = QPushButton("重設預設值")
+    param_input_layout.addWidget(ui.bnUpdateAIParams)
+    param_input_layout.addWidget(ui.bnResetAIParams)
+    param_input_layout.addStretch()
+    
+    ai_param_layout.addLayout(param_input_layout)
+    
+    # 目前參數顯示
+    ui.lblCurrentParams = QLabel(f"目前參數 - 信心指數: {ai_conf_thres}, 影像大小: {ai_imgsz}")
+    ui.lblCurrentParams.setStyleSheet("color: blue; font-weight: bold;")
+    ai_param_layout.addWidget(ui.lblCurrentParams)
+    
+    # 參數說明
+    param_info = QLabel("說明: 信心指數越低檢測越敏感，影像大小影響檢測精度和速度\n建議影像大小: 320 (快速), 640 (平衡), 1280 (精確)")
+    param_info.setStyleSheet("color: gray; font-size: 10px;")
+    ai_param_layout.addWidget(param_info)
+    
+    ai_param_group.setLayout(ai_param_layout)
+    main_tcp_layout.addWidget(ai_param_group)
+
     # TCP 伺服器控制區 (下方)
     tcp_control_group = QGroupBox("TCP 伺服器控制")
     tcp_control_layout = QVBoxLayout()
@@ -407,6 +499,10 @@ if __name__ == "__main__":
     ui.bnLoadModel.clicked.connect(load_ai_model)
     ui.bnStartTCP.clicked.connect(start_tcp_server_func)
     ui.bnStopTCP.clicked.connect(stop_tcp_server_func)
+    
+    # === 新增 AI 參數控制按鈕事件 ===
+    ui.bnUpdateAIParams.clicked.connect(update_ai_parameters)
+    ui.bnResetAIParams.clicked.connect(reset_ai_parameters)
 
     # --- 新增: 連接訊號與槽 ---
     signals.original_image_ready.connect(update_original_display)
@@ -415,6 +511,8 @@ if __name__ == "__main__":
 
     # --- 顯示與清理 ---
     mainWindow.show()
+    # 設置AI參數函數參考
+    set_ai_parameters_func(get_ai_parameters)
     
     def cleanup():
         print("Cleaning up resources...")

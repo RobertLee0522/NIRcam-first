@@ -34,6 +34,15 @@ except ImportError:
 
 ai_model = None  # 在這邊先定義一個全域變數
 
+
+# 新增：獲取AI參數的函數參考
+get_ai_parameters_func = None
+
+def set_ai_parameters_func(func):
+    """設定獲取AI參數的函數參考"""
+    global get_ai_parameters_func
+    get_ai_parameters_func = func
+
 def set_ai_model(model):
     global ai_model
     ai_model = model
@@ -436,8 +445,8 @@ class CameraOperation:
                             # 執行 AI 辨識
                             # cv2.imwrite("original.jpg", image_bgr)
                             image_bgr = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-                            image_bgr = cv2.flip(image_bgr,0)
-                            image_bgr = cv2.flip(image_bgr, 1)
+                            #image_bgr = cv2.flip(image_bgr,0)#上下翻轉（沿 X 軸對稱，top/bottom 交換）
+                            image_bgr = cv2.flip(image_bgr, 1)#左右翻轉（沿 Y 軸對稱，left/right 交換）
                             # 產生時間戳記檔名
                             save_dir = r"C:\Users\user1\Desktop\Yolov11\NIRcam\BasicDemo\savefile"
                             # 取得今天日期 (例如 20250917)
@@ -455,7 +464,18 @@ class CameraOperation:
                             filename = os.path.join(save_dir, f"image_{timestamp}.jpg")
 
                             cv2.imwrite(filename, image_bgr)
-                            results = detect_objects(ai_model, image_bgr, conf_thres=0.4)
+                            # 獲取當前的AI參數
+                            conf_thres = 0.4  # 默認值
+                            imgsz = 1280      # 默認值
+                            
+                            if get_ai_parameters_func is not None:
+                                try:
+                                    conf_thres, imgsz = get_ai_parameters_func()
+                                except Exception as e:
+                                    print(f"Error getting AI parameters, using defaults: {e}")
+                            
+                            results = detect_objects(ai_model, image_bgr, conf_thres=conf_thres, imgsz=imgsz)
+    
     
                             # 發送辨識結果到 TCP 服務器
                             if get_tcp_server is not None:
