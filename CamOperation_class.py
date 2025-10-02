@@ -11,6 +11,7 @@ import ctypes
 import random
 from ctypes import *
 import cv2
+from shared_memory_sender import SharedMemorySender
 
 sys.path.append("../MvImport")
 
@@ -34,6 +35,9 @@ except ImportError:
 
 ai_model = None  # 在這邊先定義一個全域變數
 
+# 在類的開頭添加全局變量引用
+shared_memory_sender = None
+auto_share_enabled = False
 
 # 新增：獲取AI參數的函數參考
 get_ai_parameters_func = None
@@ -137,6 +141,15 @@ def Color_numpy(data, nWidth, nHeight):
     numArray[:, :, 1] = data_g_arr
     numArray[:, :, 2] = data_b_arr
     return numArray
+def set_shared_memory_sender(sender):
+    """設置共享記憶體發送器"""
+    global shared_memory_sender
+    shared_memory_sender = sender
+
+def set_auto_share(enabled):
+    """設置是否自動分享圖像"""
+    global auto_share_enabled
+    auto_share_enabled = enabled
 
 class CameraOperation:
     def __init__(self, obj_cam, st_device_list, n_connect_num=0,
@@ -350,8 +363,12 @@ class CameraOperation:
 
     def Work_thread(self, signals):
         """
-        相機取圖線程函數 - 簡化版本
-        移除 SDK 顯示功能，只保留 AI 辨識前的影像轉換
+        相機取圖線程函數 - 完整版本
+        包含：
+        1. 影像獲取與轉換
+        2. AI 辨識處理
+        3. 共享記憶體自動發送
+        4. 信號發送（更新UI）
         """
         stFrameInfo = MV_FRAME_OUT_INFO_EX()
     
@@ -407,63 +424,94 @@ class CameraOperation:
                           f"Size: {self.st_frame_info.nWidth}x{self.st_frame_info.nHeight}, "
                           f"PixelType: {self.st_frame_info.enPixelType}")
     
-                    # === AI 辨識處理（只有啟用時才執行）===
+                    # ========================================
+                    # 第一步：影像格式轉換（從 Bayer/Mono 轉為 BGR）
+                    # ========================================
+                    try:
+                        raw_image = np.asarray(self.buf_grab_image).reshape(
+                            (self.st_frame_info.nHeight, self.st_frame_info.nWidth)
+                        )
+                        
+                        # 根據像素格式進行轉換
+                        if Is_color_data(self.st_frame_info.enPixelType):
+                            # 彩色圖像 - 從 Bayer 格式轉換為 BGR
+                            if self.st_frame_info.enPixelType == PixelType_Gvsp_BayerRG8:
+                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_RG2BGR)
+                            elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerGR8:
+                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_GR2BGR)
+                            elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerGB8:
+                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_GB2BGR)
+                            elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerBG8:
+                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_BG2BGR)
+                            else:
+                                # 默認使用 RG8
+                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_RG2BGR)
+                        elif Is_mono_data(self.st_frame_info.enPixelType):
+                            # 單色影像轉換為 3 通道供後續處理
+                            mono_array = Mono_numpy(
+                                self.buf_save_image, 
+                                self.st_frame_info.nWidth, 
+                                self.st_frame_info.nHeight
+                            )
+                            image_bgr = cv2.cvtColor(mono_array.squeeze(), cv2.COLOR_GRAY2BGR)
+                        else:
+                            # 未知格式，跳過此幀
+                            print(f"Unsupported pixel format: {self.st_frame_info.enPixelType}")
+                            continue
+                        
+                    except Exception as e:
+                        print(f"Image conversion error: {e}")
+                        continue
+                    
+                    # ========================================
+                    # 第二步：共享記憶體自動發送（如果啟用）
+                    # ========================================
+                    if auto_share_enabled and shared_memory_sender is not None:
+                        try:
+                            # 複製圖像以避免干擾後續處理
+                            image_for_sharing = image_bgr.copy()
+                            
+                            # 執行您需要的預處理（例如翻轉）
+                            # 注意：這裡的翻轉是針對共享記憶體的，不影響AI辨識
+                            image_for_sharing = cv2.flip(image_for_sharing, 1)  # 左右翻轉
+                            
+                            # 發送到共享記憶體
+                            if hasattr(shared_memory_sender, 'trigger_count'):
+                                shared_memory_sender.trigger_count += 1
+                                trigger_count = shared_memory_sender.trigger_count
+                            else:
+                                shared_memory_sender.trigger_count = 1
+                                trigger_count = 1
+                            
+                            shared_memory_sender.send_image(image_for_sharing, trigger_count)
+                            
+                            print(f"[共享記憶體] 已自動發送第 {trigger_count} 幀")
+                            
+                        except Exception as e:
+                            print(f"[共享記憶體] 發送失敗: {e}")
+    
+                    # ========================================
+                    # 第三步：AI 辨識處理（如果啟用）
+                    # ========================================
                     if ai_model is not None and detect_objects is not None:
                         try:
-                            # 在 AI 辨識前進行影像轉換
-                            raw_image = np.asarray(self.buf_grab_image).reshape(
-                                (self.st_frame_info.nHeight, self.st_frame_info.nWidth)
-                            )
+                            # 轉換為 RGB 供 YOLO 使用
+                            image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
                             
-                            # 根據像素格式進行轉換
-                            if Is_color_data(self.st_frame_info.enPixelType):
-                                # 彩色圖像 - 從 Bayer 格式轉換為 BGR
-                                if self.st_frame_info.enPixelType == PixelType_Gvsp_BayerRG8:
-                                    image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_RG2BGR)
-                                elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerGR8:
-                                    image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_GR2BGR)
-                                elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerGB8:
-                                    image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_GB2BGR)
-                                elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerBG8:
-                                    image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_BG2BGR)
-                                else:
-                                    # 默認使用 RG8
-                                    image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_RG2BGR)
-                            elif Is_mono_data(self.st_frame_info.enPixelType):
-                                # 單色影像轉換為 3 通道供 YOLO 使用
-                                mono_array = Mono_numpy(
-                                    self.buf_save_image, 
-                                    self.st_frame_info.nWidth, 
-                                    self.st_frame_info.nHeight
-                                )
-                                image_bgr = cv2.cvtColor(mono_array.squeeze(), cv2.COLOR_GRAY2BGR)
-                            else:
-                                # 未知格式，跳過此幀
-                                print(f"Unsupported pixel format: {self.st_frame_info.enPixelType}")
-                                continue
+                            # 執行左右翻轉（針對 AI 辨識）
+                            image_rgb = cv2.flip(image_rgb, 1)
                             
-                            # 執行 AI 辨識
-                            # cv2.imwrite("original.jpg", image_bgr)
-                            image_bgr = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-                            #image_bgr = cv2.flip(image_bgr,0)#上下翻轉（沿 X 軸對稱，top/bottom 交換）
-                            image_bgr = cv2.flip(image_bgr, 1)#左右翻轉（沿 Y 軸對稱，left/right 交換）
-                            # 產生時間戳記檔名
+                            # 儲存圖像（可選）
                             save_dir = r"C:\Users\user1\Desktop\Yolov11\NIRcam\BasicDemo\savefile"
-                            # 取得今天日期 (例如 20250917)
                             today = datetime.datetime.now().strftime("%Y%m%d")
-
-                            # 建立新的資料夾路徑
                             save_dir = os.path.join(save_dir, today)
-
-                            # 如果資料夾不存在就自動建立
                             os.makedirs(save_dir, exist_ok=True)
-
-                            # 加上時間戳避免檔名重複
+                            
                             now = datetime.datetime.now()
-                            timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]  # 到毫秒
+                            timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]
                             filename = os.path.join(save_dir, f"image_{timestamp}.jpg")
-
-                            cv2.imwrite(filename, image_bgr)
+                            cv2.imwrite(filename, cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR))
+                            
                             # 獲取當前的AI參數
                             conf_thres = 0.4  # 默認值
                             imgsz = 1280      # 默認值
@@ -474,8 +522,8 @@ class CameraOperation:
                                 except Exception as e:
                                     print(f"Error getting AI parameters, using defaults: {e}")
                             
-                            results = detect_objects(ai_model, image_bgr, conf_thres=conf_thres, imgsz=imgsz)
-    
+                            # 執行 AI 辨識
+                            results = detect_objects(ai_model, image_rgb, conf_thres=conf_thres, imgsz=imgsz)
     
                             # 發送辨識結果到 TCP 服務器
                             if get_tcp_server is not None:
@@ -495,9 +543,9 @@ class CameraOperation:
                             if results and hasattr(results[0], 'boxes') and len(results[0].boxes) > 0:
                                 # 在影像上繪製檢測框
                                 if draw_custom_boxes is not None:
-                                    processed_image = draw_custom_boxes(image_bgr.copy(), results)
+                                    processed_image = draw_custom_boxes(image_rgb.copy(), results)
                                 else:
-                                    processed_image = image_bgr.copy()
+                                    processed_image = image_rgb.copy()
     
                                 # 準備文字輸出結果
                                 detection_text_result += f"檢測到 {len(results[0].boxes)} 個物件:\n"
@@ -512,27 +560,20 @@ class CameraOperation:
                                         f"位置=({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f})\n"
                                     )
                             else:
-                                processed_image = image_bgr.copy()
+                                processed_image = image_rgb.copy()
                                 detection_text_result += "未檢測到任何物件。\n"
     
                             # 發送處理後的影像信號（帶辨識框的）
                             if hasattr(signals, 'processed_image_ready'):
-                                signals.processed_image_ready.emit(processed_image)
+                                # 轉回 BGR 供 Qt 顯示
+                                processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
+                                signals.processed_image_ready.emit(processed_image_bgr)
     
-                            # 發送原始影像信號
+                            # 發送原始影像信號（用於相機控制頁面顯示）
                             if hasattr(signals, 'original_image_ready'):
-                                if Is_mono_data(self.st_frame_info.enPixelType):
-                                    # 發送單色影像
-                                    mono_array = Mono_numpy(
-                                        self.buf_save_image, 
-                                        self.st_frame_info.nWidth, 
-                                        self.st_frame_info.nHeight
-                                    )
-                                    signals.original_image_ready.emit(mono_array)
-                                else:
-                                    # 發送彩色影像（轉回BGR供Qt顯示）
-                                    #image_bgr_display = cv2.cvtColor(image_bgr, cv2.COLOR_RGB2BGR)
-                                    signals.original_image_ready.emit(image_bgr)
+                                # 發送翻轉後的 BGR 圖像
+                                original_display = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+                                signals.original_image_ready.emit(original_display)
     
                             # 發送文字結果信號
                             if hasattr(signals, 'detection_results_ready'):
@@ -544,17 +585,30 @@ class CameraOperation:
                                 error_text = f"Frame: {self.st_frame_info.nFrameNum}\n"
                                 error_text += f"AI 辨識時發生錯誤: {str(e)}\n"
                                 signals.detection_results_ready.emit(error_text)
+                    
                     else:
+                        # ========================================
                         # AI 模型未載入時的處理
+                        # ========================================
+                        # 僅發送原始影像
+                        if hasattr(signals, 'original_image_ready'):
+                            # 翻轉後發送
+                            image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                            image_rgb = cv2.flip(image_rgb, 1)
+                            display_image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+                            signals.original_image_ready.emit(display_image)
+                        
                         if hasattr(signals, 'detection_results_ready'):
                             no_ai_text = f"Frame: {self.st_frame_info.nFrameNum}\n"
                             no_ai_text += "AI 模型未載入。\n"
                             signals.detection_results_ready.emit(no_ai_text)
     
                 else:
+                    # ========================================
+                    # 獲取圖像失敗的處理
+                    # ========================================
                     print(f"Get frame failed, ret = {To_hex_str(ret)}")
     
-                    # 處理獲取失敗的情況
                     if ret == MV_E_NODATA:
                         print("No data available")
                     elif ret == MV_E_TIMEOUT:
@@ -567,10 +621,14 @@ class CameraOperation:
                 
             except Exception as e:
                 print(f"Work thread exception: {e}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(0.01)
                 continue
             
+        # ========================================
         # 線程結束清理
+        # ========================================
         print("Work thread finished.")
         if hasattr(self, 'buf_grab_image') and self.buf_grab_image is not None:
             del self.buf_grab_image

@@ -14,6 +14,8 @@ import sys
 import numpy as np
 import cv2
 from CamOperation_class import set_ai_model, set_ai_parameters_func
+from shared_memory_sender import SharedMemorySender # 引入共享內存發送器
+from CamOperation_class import set_shared_memory_sender, set_auto_share
 
 # --- 新增: 用於跨執行緒通訊的訊號發射器 ---
 class SignalEmitter(QObject):
@@ -23,7 +25,7 @@ class SignalEmitter(QObject):
 
 # --- 全域變數 ---
 # 請將此路徑替換為您自己的模型權重檔路徑
-ai_model = load_model(r"C:\Users\user1\Desktop\Yolov11\train20\weights\best.pt")
+ai_model = load_model(r"C:\Users\54-0461100-01\Desktop\ultralytics\runs\detect\train20\weights\best.pt")
 from CamOperation_class import set_ai_model
 set_ai_model(ai_model)
 
@@ -62,6 +64,16 @@ if __name__ == "__main__":
     isCalibMode = True
     tcp_status_timer = None
     signals = SignalEmitter() # 實例化訊號發射器
+    # 新增全局變量用於共享內存發送器
+    global global_sender
+    global_sender = None
+    global shared_trigger_count
+    shared_trigger_count = 0
+    # 配置共享內存的目標 (請根據您的接收端程式調整)
+    global RECEIVER_HOST
+    global RECEIVER_PORT
+    RECEIVER_HOST = '127.0.0.1' 
+    RECEIVER_PORT = 9999
 
     def xFunc(event):
         global nSelCamIndex
@@ -241,8 +253,235 @@ if __name__ == "__main__":
                 ui.lblTcpStatus.setText("TCP: 伺服器未啟動")
                 ui.lblTcpStatus.setStyleSheet("color: red; font-weight: bold;")
 
+    def update_shared_memory_ui():
+        """更新共享記憶體連接狀態"""
+        global global_sender, shared_trigger_count
+        
+        if global_sender is not None:
+            # 檢查 trigger_count 屬性
+            try:
+                count = getattr(global_sender, 'trigger_count', 0)
+                ui.lblSharedMemStatus.setText(f"共享記憶體: 已啟動 (已傳送 {count} 幀)")
+                ui.lblSharedMemStatus.setStyleSheet("color: green; font-weight: bold;")
+            except Exception as e:
+                ui.lblSharedMemStatus.setText(f"共享記憶體: 已啟動 (狀態未知)")
+                ui.lblSharedMemStatus.setStyleSheet("color: orange; font-weight: bold;")
+        else:
+            ui.lblSharedMemStatus.setText("共享記憶體: 未啟動")
+            ui.lblSharedMemStatus.setStyleSheet("color: red; font-weight: bold;")
+
+    def start_shared_memory():
+       """啟動共享記憶體發送器"""
+       global global_sender, shared_trigger_count
+
+       try:
+           host = ui.edtSharedMemHost.text() or '127.0.0.1'
+           port = int(ui.edtSharedMemPort.text() or '9999')
+           print(f"嘗試連接到 {host}:{port}") 
+           if global_sender is None:
+               # 創建發送器實例
+               global_sender = SharedMemorySender(host, port)
+               if not global_sender.is_connected():
+                   QMessageBox.warning(mainWindow, "連接失敗", 
+                        "無法連接到接收端！\n請確認：\n"
+                        "1. 接收端程式 (receiver.py) 已啟動\n"
+                        "2. IP 和端口設置正確")
+                   global_sender = None
+                   return
+ 
+               # 初始化計數器
+               if not hasattr(global_sender, 'trigger_count'):
+                   global_sender.trigger_count = 0
+               shared_trigger_count = 0
+
+               # 將發送器設置到 CamOperation_class
+               set_shared_memory_sender(global_sender)
+
+               QMessageBox.information(mainWindow, "共享記憶體", 
+                   f"共享記憶體已啟動！\n\n"
+                   f"目標位址: {host}:{port}\n"
+                   f"請確保接收端程式 (receiver.py) 已在運行\n\n"
+                   f"提示: 可在「共享記憶體控制」頁籤中\n"
+                   f"啟用「自動分享」或使用「手動分享」")
+
+               ui.bnStartSharedMem.setEnabled(False)
+               ui.bnStopSharedMem.setEnabled(True)
+               ui.chkAutoShare.setEnabled(True)
+               ui.bnManualShare.setEnabled(True)
+
+               # 更新UI狀態
+               update_shared_memory_ui()
+           else:
+               QMessageBox.warning(mainWindow, "共享記憶體", "發送器已在運行中！")
+
+       except Exception as e:
+           QMessageBox.critical(mainWindow, "共享記憶體", f"啟動失敗:\n{str(e)}")
+           import traceback
+           traceback.print_exc()
+
+    def stop_shared_memory():
+        """停止共享記憶體發送器"""
+        global global_sender
+
+        try:
+            if global_sender is not None:
+                # 停用自動分享
+                set_auto_share(False)
+                ui.chkAutoShare.setChecked(False)
+
+                # 清除發送器引用
+                set_shared_memory_sender(None)
+
+                # 關閉連接
+                try:
+                    global_sender.close()
+                except Exception as e:
+                    print(f"關閉發送器時出錯: {e}")
+
+                global_sender = None
+
+                QMessageBox.information(mainWindow, "共享記憶體", "共享記憶體已停止")
+                ui.bnStartSharedMem.setEnabled(True)
+                ui.bnStopSharedMem.setEnabled(False)
+                ui.chkAutoShare.setEnabled(False)
+                ui.bnManualShare.setEnabled(False)
+
+                # 更新UI狀態
+                update_shared_memory_ui()
+            else:
+                QMessageBox.information(mainWindow, "共享記憶體", "共享記憶體未在運行")
+
+        except Exception as e:
+            QMessageBox.critical(mainWindow, "共享記憶體", f"停止失敗:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def toggle_auto_share():
+        """切換自動分享模式"""
+        global global_sender
+
+        enabled = ui.chkAutoShare.isChecked()
+
+        if enabled and global_sender is None:
+            QMessageBox.warning(mainWindow, "自動分享", "請先啟動共享記憶體！")
+            ui.chkAutoShare.setChecked(False)
+            return
+
+        if not isGrabbing:
+            QMessageBox.warning(mainWindow, "自動分享", "請先開始取像！")
+            ui.chkAutoShare.setChecked(False)
+            return
+
+        set_auto_share(enabled)
+
+        if enabled:
+            QMessageBox.information(mainWindow, "自動分享", 
+                "✅ 已啟用自動分享\n\n"
+                "每一幀圖像都會自動發送到共享記憶體\n"
+                "接收端可實時接收圖像數據")
+        else:
+            QMessageBox.information(mainWindow, "自動分享", 
+                "⏸ 已停用自動分享\n\n"
+                "可使用「手動分享」按鈕手動發送圖像")
+
+    def manual_share_current_frame():
+        """手動分享當前幀"""
+        global global_sender, shared_trigger_count
+
+        if not isGrabbing:
+            QMessageBox.warning(mainWindow, "錯誤", "請先開始取像！")
+            return
+
+        if global_sender is None:
+            QMessageBox.warning(mainWindow, "錯誤", "請先啟動共享記憶體！")
+            return
+
+        try:
+            # 調用原有的手動分享函數
+            transfer_image_and_flip()
+
+            # 獲取當前計數
+            count = getattr(global_sender, 'trigger_count', shared_trigger_count)
+
+            QMessageBox.information(mainWindow, "手動分享", 
+                f"✅ 已發送圖像\n\n"
+                f"觸發次數: {count}\n"
+                f"接收端應已收到數據")
+
+        except Exception as e:
+            QMessageBox.critical(mainWindow, "手動分享", f"發送失敗:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+    def transfer_image_and_flip():
+        """
+        手動觸發：獲取當前幀，處理並共享
+        這個函數用於手動分享按鈕
+        """
+        global obj_cam_operation, global_sender, shared_trigger_count
+
+        if not isGrabbing or obj_cam_operation.buf_save_image is None:
+            raise Exception("相機未在取像或緩衝區為空")
+
+        try:
+            # 獲取緩衝區鎖，防止取圖線程同時寫入
+            obj_cam_operation.buf_lock.acquire() 
+
+            # 1. 從 C 緩衝區創建 NumPy 數組
+            st_info = obj_cam_operation.st_frame_info
+
+            if st_info is None:
+                raise Exception("幀信息為空")
+
+            # 創建原始圖像數組
+            raw_data = np.ctypeslib.as_array(
+                obj_cam_operation.buf_save_image, 
+                shape=(st_info.nHeight, st_info.nWidth)
+            )
+
+            # 複製數據
+            image_bayer = raw_data.copy()
+            obj_cam_operation.buf_lock.release()
+
+            # 2. 轉換圖像格式
+            if st_info.enPixelType == PixelType_Gvsp_BayerRG8:
+                image_bgr = cv2.cvtColor(image_bayer, cv2.COLOR_BAYER_RG2BGR)
+            elif st_info.enPixelType == PixelType_Gvsp_BayerGR8:
+                image_bgr = cv2.cvtColor(image_bayer, cv2.COLOR_BAYER_GR2BGR)
+            elif st_info.enPixelType == PixelType_Gvsp_BayerGB8:
+                image_bgr = cv2.cvtColor(image_bayer, cv2.COLOR_BAYER_GB2BGR)
+            elif st_info.enPixelType == PixelType_Gvsp_BayerBG8:
+                image_bgr = cv2.cvtColor(image_bayer, cv2.COLOR_BAYER_BG2BGR)
+            elif st_info.enPixelType == PixelType_Gvsp_Mono8:
+                image_bgr = cv2.cvtColor(image_bayer, cv2.COLOR_GRAY2BGR)
+            else:
+                raise Exception(f"不支援的像素格式: {st_info.enPixelType}")
+
+        except Exception as e:
+            # 確保在異常情況下釋放鎖
+            if obj_cam_operation.buf_lock.locked():
+                obj_cam_operation.buf_lock.release()
+            raise e
+
+        # 3. 圖像處理：執行翻轉操作
+        image_bgr = cv2.flip(image_bgr, 1)  # 左右翻轉
+
+        # 4. 發送到共享記憶體
+        shared_trigger_count += 1
+        global_sender.send_image(image_bgr, shared_trigger_count)
+
+        # 同步計數器
+        if hasattr(global_sender, 'trigger_count'):
+            global_sender.trigger_count = shared_trigger_count
+
+        print(f"[手動分享] 已發送圖像，觸發次數: {shared_trigger_count}")
+
+
     def open_device():
         global deviceList, nSelCamIndex, obj_cam_operation, isOpen
+        #共享記憶體全域變數
+        global global_sender
+        global shared_trigger_count # 確保可以訪問
+        
         if isOpen:
             QMessageBox.warning(mainWindow, "Error", 'Camera is Running!', QMessageBox.Ok)
             return MV_E_CALLORDER
@@ -285,11 +524,16 @@ if __name__ == "__main__":
 
     def close_device():
         global isOpen, isGrabbing, obj_cam_operation
+        global obj_cam_operation
+        global global_sender # 確保可以訪問
         if isGrabbing:
             stop_grabbing()
         if isOpen:
             obj_cam_operation.Close_device()
             isOpen = False
+        # **【新增邏輯】** 清理共享內存資源
+        if global_sender is not None:
+            global_sender.close()
         isGrabbing = False
         enable_controls()
 
@@ -337,6 +581,18 @@ if __name__ == "__main__":
         ui.bnStop.setEnabled(isOpen and isGrabbing)
         ui.bnSoftwareTrigger.setEnabled(isGrabbing and ui.radioTriggerMode.isChecked())
         ui.bnSaveImage.setEnabled(isOpen and isGrabbing)
+        # 共享記憶體控制
+        # 只有在取像且共享記憶體已啟動時才能手動分享
+        ui.bnManualShare.setEnabled(isOpen and isGrabbing and global_sender is not None)
+            # 自動分享只有在共享記憶體啟動時才能勾選
+        if global_sender is None:
+            ui.chkAutoShare.setEnabled(False)
+            ui.chkAutoShare.setChecked(False)
+        elif not isGrabbing:
+            # 如果停止取像，自動取消自動分享
+            if ui.chkAutoShare.isChecked():
+                ui.chkAutoShare.setChecked(False)
+                set_auto_share(False)
 
     # --- 新增: 更新 UI 的槽函式 ---
     def update_display(image_array, display_label):
@@ -363,7 +619,6 @@ if __name__ == "__main__":
     def update_detection_text(result_string):
         """更新「TCP控制」頁面的辨識結果文字"""
         ui.detectionResultText.setText(result_string)
-
     # --- 主程式 ---
     app = QApplication(sys.argv)
     mainWindow = QMainWindow()
@@ -508,6 +763,58 @@ if __name__ == "__main__":
     signals.original_image_ready.connect(update_original_display)
     signals.processed_image_ready.connect(update_processed_display)
     signals.detection_results_ready.connect(update_detection_text)
+        # === 共享記憶體控制區塊 ===
+    shared_mem_group = QGroupBox("共享記憶體控制（原始圖像分享）")
+    shared_mem_layout = QVBoxLayout()
+    
+    # 連接設定
+    connection_layout = QHBoxLayout()
+    connection_layout.addWidget(QLabel("接收端 IP:"))
+    ui.edtSharedMemHost = QLineEdit("127.0.0.1")
+    connection_layout.addWidget(ui.edtSharedMemHost)
+    connection_layout.addWidget(QLabel("埠號:"))
+    ui.edtSharedMemPort = QLineEdit("9999")
+    connection_layout.addWidget(ui.edtSharedMemPort)
+    shared_mem_layout.addLayout(connection_layout)
+    
+    # 控制按鈕
+    button_layout = QHBoxLayout()
+    ui.bnStartSharedMem = QPushButton("啟動共享記憶體")
+    ui.bnStopSharedMem = QPushButton("停止共享記憶體")
+    ui.bnStopSharedMem.setEnabled(False)
+    ui.bnManualShare = QPushButton("手動分享當前圖像")
+    ui.bnManualShare.setEnabled(False)
+    button_layout.addWidget(ui.bnStartSharedMem)
+    button_layout.addWidget(ui.bnStopSharedMem)
+    button_layout.addWidget(ui.bnManualShare)
+    shared_mem_layout.addLayout(button_layout)
+    
+    # 自動分享選項
+    ui.chkAutoShare = QCheckBox("自動分享每一幀（實時傳輸）")
+    ui.chkAutoShare.setChecked(False)
+    ui.chkAutoShare.setEnabled(False)
+    shared_mem_layout.addWidget(ui.chkAutoShare)
+    
+    # 狀態顯示
+    ui.lblSharedMemStatus = QLabel("共享記憶體: 未啟動")
+    ui.lblSharedMemStatus.setStyleSheet("color: red; font-weight: bold;")
+    shared_mem_layout.addWidget(ui.lblSharedMemStatus)
+    
+    info_label = QLabel("說明: 共享記憶體用於將原始圖像傳送給其他本機程式（如 LabVIEW）")
+    info_label.setStyleSheet("color: gray; font-size: 10px;")
+    shared_mem_layout.addWidget(info_label)
+    
+    shared_mem_group.setLayout(shared_mem_layout)
+    main_tcp_layout.addWidget(shared_mem_group)
+
+    # 連接共享記憶體相關信號
+    ui.bnStartSharedMem.clicked.connect(start_shared_memory)
+    ui.bnStopSharedMem.clicked.connect(stop_shared_memory)
+    ui.bnManualShare.clicked.connect(manual_share_current_frame)
+    ui.chkAutoShare.stateChanged.connect(toggle_auto_share)
+    shared_mem_timer = QTimer()
+    shared_mem_timer.timeout.connect(update_shared_memory_ui)
+    shared_mem_timer.start(1000)  # 每秒更新一次
 
     # --- 顯示與清理 ---
     mainWindow.show()
@@ -516,8 +823,23 @@ if __name__ == "__main__":
     
     def cleanup():
         print("Cleaning up resources...")
-        stop_tcp_server()
-        close_device()
+        # 停止 TCP 服務器
+        try:
+            stop_tcp_server()
+        except:
+            pass
+        
+        # 停止共享記憶體
+        try:
+            stop_shared_memory()
+        except:
+            pass
+        
+        # 關閉相機
+        try:
+            close_device()
+        except:
+            pass
         print("Cleanup finished.")
     
     app.aboutToQuit.connect(cleanup)
