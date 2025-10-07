@@ -502,7 +502,7 @@ class CameraOperation:
                             image_rgb = cv2.flip(image_rgb, 1)
                             
                             # 儲存圖像（可選）
-                            save_dir = r"C:\Users\user1\Desktop\Yolov11\NIRcam\BasicDemo\savefile"
+                            save_dir = r"E:\savefile"
                             today = datetime.datetime.now().strftime("%Y%m%d")
                             save_dir = os.path.join(save_dir, today)
                             os.makedirs(save_dir, exist_ok=True)

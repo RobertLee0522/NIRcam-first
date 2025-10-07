@@ -25,7 +25,7 @@ class SignalEmitter(QObject):
 
 # --- 全域變數 ---
 # 請將此路徑替換為您自己的模型權重檔路徑
-ai_model = load_model(r"C:\Users\54-0461100-01\Desktop\ultralytics\runs\detect\train20\weights\best.pt")
+ai_model = load_model(r"C:\Users\user1\Desktop\Yolov11\train20\weights\best.pt")
 from CamOperation_class import set_ai_model
 set_ai_model(ai_model)
 
