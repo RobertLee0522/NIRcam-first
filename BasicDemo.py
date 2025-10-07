@@ -600,7 +600,8 @@ if __name__ == "__main__":
         try:
             height, width, channel = image_array.shape
             bytes_per_line = 3 * width
-            q_image = QImage(cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB).data, width, height, bytes_per_line, QImage.Format_RGB888)
+            q_image = QImage(image_array.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            #q_image = QImage(cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB).data, width, height, bytes_per_line, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(q_image)
             display_label.setPixmap(pixmap.scaled(display_label.size(), aspectRatioMode=Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation))
         except Exception as e:
