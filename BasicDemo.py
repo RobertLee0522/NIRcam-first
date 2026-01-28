@@ -25,7 +25,8 @@ class SignalEmitter(QObject):
 
 # --- 全域變數 ---
 # 請將此路徑替換為您自己的模型權重檔路徑
-ai_model = load_model(r"C:\Users\user1\Desktop\Yolov11\train20\weights\best.pt")
+ai_model = load_model(r"C:\Users\user1\Desktop\Yolov11\train20\weights\best_yolov11_PET.pt")#best_yolov11_PET.pt
+print("-----------------------------------Entry Yolo-Model-----7 class , material -------------------------")
 from CamOperation_class import set_ai_model
 set_ai_model(ai_model)
 
@@ -821,6 +822,144 @@ if __name__ == "__main__":
     mainWindow.show()
     # 設置AI參數函數參考
     set_ai_parameters_func(get_ai_parameters)
+    
+    # === 自動初始化函數 ===
+    def auto_initialize():
+        """
+        自動初始化流程：
+        1. 自動枚舉設備
+        2. 自動打開設備（選擇第一個）
+        3. 自動設置觸發模式
+        4. 自動開始採集
+        """
+        global deviceList, nSelCamIndex, obj_cam_operation, isOpen, isGrabbing
+        
+        print("=" * 50)
+        print("正在執行自動初始化...")
+        print("=" * 50)
+        
+        # 步驟 1: 自動枚舉設備
+        print("[步驟 1/4] 正在搜尋設備...")
+        deviceList = MV_CC_DEVICE_INFO_LIST()
+        ret = MvCamera.MV_CC_EnumDevices(MV_GIGE_DEVICE | MV_USB_DEVICE, deviceList)
+        
+        if ret != 0:
+            print(f"[錯誤] 設備枚舉失敗! 錯誤碼: {ToHexStr(ret)}")
+            QMessageBox.warning(mainWindow, "自動初始化失敗", 
+                f"設備枚舉失敗!\n錯誤碼: {ToHexStr(ret)}", QMessageBox.Ok)
+            return False
+        
+        if deviceList.nDeviceNum == 0:
+            print("[錯誤] 未找到任何設備!")
+            QMessageBox.warning(mainWindow, "自動初始化失敗", 
+                "未找到任何相機設備!\n請確認相機已正確連接。", QMessageBox.Ok)
+            return False
+        
+        print(f"[成功] 找到 {deviceList.nDeviceNum} 個設備")
+        
+        # 更新設備列表 UI
+        devList = []
+        for i in range(0, deviceList.nDeviceNum):
+            mvcc_dev_info = cast(deviceList.pDeviceInfo[i], POINTER(MV_CC_DEVICE_INFO)).contents
+            if mvcc_dev_info.nTLayerType == MV_GIGE_DEVICE:
+                chUserDefinedName = ""
+                for per in mvcc_dev_info.SpecialInfo.stGigEInfo.chUserDefinedName:
+                    if 0 == per:
+                        break
+                    chUserDefinedName += chr(per)
+                chModelName = ""
+                for per in mvcc_dev_info.SpecialInfo.stGigEInfo.chModelName:
+                    if 0 == per:
+                        break
+                    chModelName += chr(per)
+                nip1 = ((mvcc_dev_info.SpecialInfo.stGigEInfo.nCurrentIp & 0xff000000) >> 24)
+                nip2 = ((mvcc_dev_info.SpecialInfo.stGigEInfo.nCurrentIp & 0x00ff0000) >> 16)
+                nip3 = ((mvcc_dev_info.SpecialInfo.stGigEInfo.nCurrentIp & 0x0000ff00) >> 8)
+                nip4 = (mvcc_dev_info.SpecialInfo.stGigEInfo.nCurrentIp & 0x000000ff)
+                devList.append(
+                    f"[{i}]GigE: {chUserDefinedName} {chModelName}({nip1}.{nip2}.{nip3}.{nip4})")
+            elif mvcc_dev_info.nTLayerType == MV_USB_DEVICE:
+                chUserDefinedName = ""
+                for per in mvcc_dev_info.SpecialInfo.stUsb3VInfo.chUserDefinedName:
+                    if per == 0:
+                        break
+                    chUserDefinedName += chr(per)
+                chModelName = ""
+                for per in mvcc_dev_info.SpecialInfo.stUsb3VInfo.chModelName:
+                    if 0 == per:
+                        break
+                    chModelName += chr(per)
+                strSerialNumber = ""
+                for per in mvcc_dev_info.SpecialInfo.stUsb3VInfo.chSerialNumber:
+                    if per == 0:
+                        break
+                    strSerialNumber += chr(per)
+                devList.append(f"[{i}]USB: {chUserDefinedName} {chModelName}({strSerialNumber})")
+        
+        ui.ComboDevices.clear()
+        ui.ComboDevices.addItems(devList)
+        ui.ComboDevices.setCurrentIndex(0)
+        
+        # 步驟 2: 自動打開設備（選擇第一個設備）
+        print("[步驟 2/4] 正在打開設備...")
+        nSelCamIndex = 0  # 選擇第一個設備
+        obj_cam_operation = CameraOperation(cam, deviceList, nSelCamIndex)
+        ret = obj_cam_operation.Open_device()
+        
+        if ret != 0:
+            print(f"[錯誤] 設備打開失敗! 錯誤碼: {ToHexStr(ret)}")
+            QMessageBox.warning(mainWindow, "自動初始化失敗", 
+                f"設備打開失敗!\n錯誤碼: {ToHexStr(ret)}", QMessageBox.Ok)
+            isOpen = False
+            return False
+        
+        isOpen = True
+        print(f"[成功] 設備已打開: {devList[0]}")
+        
+        # 步驟 3: 設置觸發模式（軟體觸發模式）
+        print("[步驟 3/4] 正在設置觸發模式...")
+        ret = obj_cam_operation.Set_trigger_mode(True)  # True = 觸發模式, False = 連續模式
+        if ret == 0:
+            ui.radioContinueMode.setChecked(False)
+            ui.radioTriggerMode.setChecked(True)
+            print("[成功] 已設置為軟體觸發模式")
+        else:
+            print(f"[警告] 設置觸發模式失敗，保持預設模式")
+        
+        # 獲取並設置相機參數
+        get_param()
+        
+        # 步驟 4: 自動開始採集
+        print("[步驟 4/4] 正在開始採集...")
+        ret = obj_cam_operation.Start_grabbing(signals)
+        
+        if ret != 0:
+            print(f"[錯誤] 開始採集失敗! 錯誤碼: {ToHexStr(ret)}")
+            QMessageBox.warning(mainWindow, "自動初始化失敗", 
+                f"開始採集失敗!\n錯誤碼: {ToHexStr(ret)}", QMessageBox.Ok)
+            return False
+        
+        isGrabbing = True
+        print("[成功] 採集已開始")
+        
+        # 更新 UI 控制狀態
+        enable_controls()
+        ui.bnSoftwareTrigger.setEnabled(True)  # 觸發模式下允許軟體觸發
+        
+        print("=" * 50)
+        print("自動初始化完成！")
+        print("  - 設備: " + devList[0])
+        print("  - 模式: 軟體觸發模式")
+        print("  - 狀態: 正在採集，等待觸發信號")
+        print("=" * 50)
+        
+        return True
+    
+    # 使用 QTimer 延遲執行自動初始化，確保 UI 完全載入
+    auto_init_timer = QTimer()
+    auto_init_timer.setSingleShot(True)
+    auto_init_timer.timeout.connect(auto_initialize)
+    auto_init_timer.start(500)  # 500ms 後執行自動初始化
     
     def cleanup():
         print("Cleaning up resources...")

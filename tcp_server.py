@@ -128,6 +128,7 @@ class TCPServer:
             
             # 構建訊息: trigger_num,照片寬度,照片高度,物件數量,物件資料...,結尾4個點
             message_parts = [
+                ";",
                 self.trigger_count,     # 觸發編號
                 image_width,            # 照片寬度(像素)
                 image_height,           # 照片高度(像素) 
@@ -141,15 +142,15 @@ class TCPServer:
             
             if self.send_message(message):
                 if object_count > 0:
-                    print(f"Sent to LabVIEW: Trigger {self.trigger_count}, Image({image_width}x{image_height}), {object_count} objects detected")
+                    print(f"Sent to LabVIEW1122: Trigger {self.trigger_count}, Image({image_width}x{image_height}), {object_count} objects detected")
                     # 顯示每個物件的像素座標
                     for i in range(object_count):
-                        idx = 4 + i * 5  # 跳過trigger_num, width, height, count
+                        idx = 5 + i * 5  # 跳過trigger_num, width, height, count
                         label = message_parts[idx]
                         x1, y1, x2, y2 = message_parts[idx+1:idx+5]
                         print(f"  Object {i+1}: Label={label}, BBox=({x1},{y1})-({x2},{y2}) pixels")
                 else:
-                    print(f"Sent to LabVIEW: Trigger {self.trigger_count}, Image({image_width}x{image_height}), no objects detected")
+                    print(f"Sent to LabVIEW0099: Trigger {self.trigger_count}, Image({image_width}x{image_height}), no objects detected")
                 print(f"Raw message: {message.strip()}")
                 return True
             else:
@@ -220,7 +221,7 @@ class TCPServer:
             
             if self.send_message(message):
                 if object_count > 0:
-                    print(f"Sent to LabVIEW: Trigger {self.trigger_count}, Image({image_width}x{image_height}), {object_count} objects detected")
+                    print(f"Sent to LabVIEW1234: Trigger {self.trigger_count}, Image({image_width}x{image_height}), {object_count} objects detected")
                     # 顯示每個物件的像素座標
                     for i in range(object_count):
                         idx = 4 + i * 5  # 跳過trigger_num, width, height, count
@@ -228,7 +229,7 @@ class TCPServer:
                         center_x, center_y, width, height = message_parts[idx+1:idx+5]
                         print(f"  Object {i+1}: Label={label}, Center=({center_x},{center_y}), Size={width}x{height} pixels")
                 else:
-                    print(f"Sent to LabVIEW: Trigger {self.trigger_count}, Image({image_width}x{image_height}), no objects detected")
+                    print(f"Sent to LabVIEW5678: Trigger {self.trigger_count}, Image({image_width}x{image_height}), no objects detected")
                 print(f"Raw message: {message.strip()}")
                 return True
             else:
