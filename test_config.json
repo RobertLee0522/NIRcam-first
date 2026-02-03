@@ -1,0 +1,47 @@
+{
+    "zone": {
+        "entry_zone_ratio": 0.375,
+        "trigger_zone_top": 0.375,
+        "trigger_zone_bottom": 0.625,
+        "exit_zone_ratio": 0.625
+    },
+    "lens": {
+        "lens_type": "12mm",
+        "center_tolerance_12mm": 5,
+        "center_tolerance_8mm": 8
+    },
+    "detection": {
+        "confidence_threshold": 0.75,
+        "iou_threshold": 0.45,
+        "max_det": 100
+    },
+    "tracking": {
+        "tracking_timeout_frames": 15,
+        "center_history_length": 3,
+        "confidence_history_length": 3,
+        "drift_multiplier": 2.0
+    },
+    "blow": {
+        "blow_delay_min_ms": 80,
+        "blow_delay_max_ms": 120,
+        "ack_timeout_ms": 200
+    },
+    "tcp": {
+        "host": "localhost",
+        "port": 8888,
+        "heartbeat_interval_s": 5.0
+    },
+    "image": {
+        "image_width": 1280,
+        "image_height": 1024
+    },
+    "monitoring": {
+        "min_success_rate": 0.95,
+        "max_duplicate_rate": 0.0,
+        "max_tracking_loss_rate": 0.1,
+        "min_avg_confidence": 0.85,
+        "print_stats_interval_frames": 100,
+        "log_to_file": true,
+        "log_file_path": "two_band_filter_log.txt"
+    }
+}
