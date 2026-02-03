@@ -33,6 +33,15 @@ except ImportError:
     print("Warning: tcp_server module not found. TCP functionality will be disabled.")
     get_tcp_server = None
 
+# 匯入 Two-Band Filter 觸發系統
+try:
+    from simple_tracker import SimpleTracker
+    from two_band_filter import TwoBandFilter
+except ImportError:
+    print("Warning: Two-Band Filter system not found. Trigger system will be disabled.")
+    SimpleTracker = None
+    TwoBandFilter = None
+
 ai_model = None  # 在這邊先定義一個全域變數
 
 # 在類的開頭添加全局變量引用
@@ -179,6 +188,12 @@ class CameraOperation:
         self.exposure_time = exposure_time
         self.gain = gain
         self.buf_lock = threading.Lock()
+        
+        # ========== Two-Band Filter 觸發系統 ==========
+        self.tracker = None
+        self.two_band_filter = None
+        self.enable_trigger_system = False  # 是否啟用觸發系統
+        # ==============================================
 
     def Open_device(self):
         if not self.b_open_device:
@@ -360,6 +375,85 @@ class CameraOperation:
     
             print('show info', 'set parameter success!')
             return MV_OK
+    
+    # ========== Two-Band Filter 觸發系統方法 ==========
+    
+    def initialize_trigger_system(self, image_width, image_height, lens_type="12mm"):
+        """
+        初始化 Two-Band Filter 觸發系統
+        
+        Parameters:
+            image_width: 圖像寬度（像素）
+            image_height: 圖像高度（像素）
+            lens_type: 鏡頭類型 ("12mm" 或 "8mm")
+            
+        Returns:
+            bool: 是否成功初始化
+        """
+        if SimpleTracker is None or TwoBandFilter is None:
+            print("[Camera] Two-Band Filter system not imported. Cannot initialize.")
+            return False
+        
+        try:
+            # 初始化追蹤器
+            self.tracker = SimpleTracker(
+                max_age=15,           # 追蹤失敗後保留 15 帧
+                min_hits=3,           # 至少匹配 3 次才視為穩定追蹤
+                iou_threshold=0.3     # IoU 閾值
+            )
+            print("[Camera] SimpleTracker initialized")
+            
+            # 初始化 Two-Band Filter
+            tcp_server = get_tcp_server() if get_tcp_server is not None else None
+            
+            self.two_band_filter = TwoBandFilter(
+                image_width=image_width,
+                image_height=image_height,
+                lens_type=lens_type,
+                confidence_threshold=0.75,
+                tracking_timeout_frames=15,
+                tcp_server=tcp_server
+            )
+            print("[Camera] Two-Band Filter initialized")
+            
+            self.enable_trigger_system = True
+            print(f"[Camera] Trigger system initialized successfully ({lens_type}, {image_width}x{image_height})")
+            
+            return True
+            
+        except Exception as e:
+            print(f"[Camera] Error initializing trigger system: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def disable_trigger_system(self):
+        """停用觸發系統"""
+        self.enable_trigger_system = False
+        print("[Camera] Trigger system disabled")
+    
+    def enable_trigger_system_func(self):
+        """啟用觸發系統"""
+        if self.tracker is not None and self.two_band_filter is not None:
+            self.enable_trigger_system = True
+            print("[Camera] Trigger system enabled")
+        else:
+            print("[Camera] Trigger system not initialized. Call initialize_trigger_system() first.")
+    
+    def get_trigger_statistics(self):
+        """獲取觸發系統統計資訊"""
+        if self.two_band_filter is not None:
+            return self.two_band_filter.get_statistics()
+        return None
+    
+    def print_trigger_statistics(self):
+        """列印觸發系統統計資訊"""
+        if self.two_band_filter is not None:
+            self.two_band_filter.print_statistics()
+        else:
+            print("[Camera] Trigger system not initialized")
+    
+    # =================================================
 
     def Work_thread(self, signals):
         """
@@ -524,17 +618,63 @@ class CameraOperation:
                             
                             # 執行 AI 辨識
                             results = detect_objects(ai_model, image_rgb, conf_thres=conf_thres, imgsz=imgsz)
-    
-                            # 發送辨識結果到 TCP 服務器
-                            if get_tcp_server is not None:
-                                tcp_server = get_tcp_server()
-                                if tcp_server:
-                                    tcp_server.send_detection_result(
-                                        results, 
-                                        self.st_frame_info.nWidth, 
-                                        self.st_frame_info.nHeight
+                            
+                            # ========================================
+                            # Two-Band Filter 觸發系統處理
+                            # ========================================
+                            if self.enable_trigger_system and self.tracker is not None and self.two_band_filter is not None:
+                                try:
+                                    # 1. 物體追蹤
+                                    tracker_results = self.tracker.update(results)
+                                    
+                                    # 2. 轉換格式給 Two-Band Filter
+                                    # tracker_results: [(track_id, bbox, confidence, class_id), ...]
+                                    # 轉換為: [(track_id, [x1, y1, x2, y2, conf, class_id]), ...]
+                                    filter_input = [
+                                        (track_id, np.concatenate([bbox, [conf, cls]]))
+                                        for track_id, bbox, conf, cls in tracker_results
+                                    ]
+                                    
+                                    # 3. Two-Band Filter 處理（觸發判斷）
+                                    filter_result = self.two_band_filter.process_frame(
+                                        detections=results,
+                                        tracker_results=filter_input
                                     )
-    
+                                    
+                                    # 4. 檢查觸發結果
+                                    if filter_result.get('triggered_this_frame'):
+                                        triggered_count = len(filter_result['triggered_this_frame'])
+                                        print(f"[TriggerSystem] Triggered {triggered_count} objects this frame")
+                                        
+                                        # 列印每個觸發物體的詳細資訊
+                                        for trigger in filter_result['triggered_this_frame']:
+                                            print(f"  → Track {trigger['track_id']}: "
+                                                  f"Class={trigger['class_id']}, "
+                                                  f"Pos=({trigger['cx']:.1f}, {trigger['cy']:.1f}), "
+                                                  f"Conf={trigger['confidence']:.2f}")
+                                    
+                                    # 注意：氣吹指令已經由 blow_controller 自動發送到 TCP
+                                    # 不需要在這裡再次發送
+                                    
+                                except Exception as e:
+                                    print(f"[TriggerSystem] Error in Two-Band Filter processing: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                            
+                            else:
+                                # ========================================
+                                # 原有的 TCP 發送方式（不使用觸發系統）
+                                # ========================================
+                                # 發送辨識結果到 TCP 服務器
+                                if get_tcp_server is not None:
+                                    tcp_server = get_tcp_server()
+                                    if tcp_server:
+                                        tcp_server.send_detection_result(
+                                            results, 
+                                            self.st_frame_info.nWidth, 
+                                            self.st_frame_info.nHeight
+                                        )
+
                             # 準備辨識結果文字
                             detection_text_result = f"Frame: {self.st_frame_info.nFrameNum}\n"
                             detection_text_result += f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\n"
