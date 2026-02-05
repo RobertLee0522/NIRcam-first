@@ -160,6 +160,73 @@ class TCPServer:
             print(f"Error sending detection result: {e}")
             return False
     
+    def send_filtered_detection_result(self, filtered_boxes, image_width, image_height):
+        """發送過濾後的辨識結果到LabVIEW（只包含觸碰邊界線的物件）
+        
+        Args:
+            filtered_boxes: list of tuples [(class_id, x1, y1, x2, y2, conf), ...]
+            image_width: 照片寬度
+            image_height: 照片高度
+        
+        格式: ;,trigger_num,照片寬度,照片高度,物件數量,label1,x1_pixel,y1_pixel,x2_pixel,y2_pixel,...,結尾4個點(0,0,0,0)
+        """
+        self.trigger_count += 1
+        
+        if not self.is_connected:
+            print("No LabVIEW client connected")
+            return False
+        
+        try:
+            detection_data = []
+            object_count = len(filtered_boxes)
+            
+            for (cls, x1, y1, x2, y2, conf) in filtered_boxes:
+                # 確保座標在圖像範圍內
+                x1 = max(0, min(int(x1), image_width - 1))
+                y1 = max(0, min(int(y1), image_height - 1))
+                x2 = max(0, min(int(x2), image_width - 1))
+                y2 = max(0, min(int(y2), image_height - 1))
+                
+                # 添加物件資料: label,x1_pixel,y1_pixel,x2_pixel,y2_pixel
+                detection_data.extend([
+                    int(cls),      # label
+                    x1,            # x1_pixel (左上角x座標)
+                    y1,            # y1_pixel (左上角y座標)
+                    x2,            # x2_pixel (右下角x座標)
+                    y2             # y2_pixel (右下角y座標)
+                ])
+            
+            # 構建訊息: trigger_num,照片寬度,照片高度,物件數量,物件資料...,結尾4個點
+            message_parts = [
+                ";",
+                self.trigger_count,     # 觸發編號
+                image_width,            # 照片寬度(像素)
+                image_height,           # 照片高度(像素) 
+                object_count            # 物件數量
+            ]
+            message_parts.extend(detection_data)    # 物件資料
+            message_parts.extend([0, 0, 0, 0])      # 結尾4個點
+            
+            # 轉換成字串
+            message = ",".join(map(str, message_parts)) + "\n"
+            
+            if self.send_message(message):
+                print(f"Sent FILTERED to LabVIEW: Trigger {self.trigger_count}, Image({image_width}x{image_height}), {object_count} objects touching boundary lines")
+                # 顯示每個物件的像素座標
+                for i in range(object_count):
+                    idx = 5 + i * 5  # 跳過trigger_num, width, height, count
+                    label = message_parts[idx]
+                    x1, y1, x2, y2 = message_parts[idx+1:idx+5]
+                    print(f"  Object {i+1}: Label={label}, BBox=({x1},{y1})-({x2},{y2}) pixels [觸碰邊界線]")
+                print(f"Raw message: {message.strip()}")
+                return True
+            else:
+                return False
+                    
+        except Exception as e:
+            print(f"Error sending filtered detection result: {e}")
+            return False
+    
     def send_detection_result_with_center_and_size(self, detections, image_width, image_height):
         """發送辨識結果到LabVIEW (中心點+寬高格式)
         
