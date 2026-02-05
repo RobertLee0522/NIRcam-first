@@ -601,8 +601,17 @@ if __name__ == "__main__":
         try:
             height, width, channel = image_array.shape
             bytes_per_line = 3 * width
-            q_image = QImage(image_array.data, width, height, bytes_per_line, QImage.Format_RGB888)
-            #q_image = QImage(cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB).data, width, height, bytes_per_line, QImage.Format_RGB888)
+            # 確保數據是連續的並正確複製
+            image_copy = np.ascontiguousarray(image_array)
+            
+            # 測試：打印第一個像素的顏色值來確認格式
+            print(f"First pixel RGB values: R={image_copy[0,0,0]}, G={image_copy[0,0,1]}, B={image_copy[0,0,2]}")
+            
+            # 創建 QImage 並使用 rgbSwapped() 來交換 R 和 B 通道
+            q_image = QImage(image_copy.data, width, height, bytes_per_line, QImage.Format_RGB888).copy()
+            # 如果影像實際上是 BGR 格式，使用 rgbSwapped() 來修正
+            q_image = q_image.rgbSwapped()
+            
             pixmap = QPixmap.fromImage(q_image)
             display_label.setPixmap(pixmap.scaled(display_label.size(), aspectRatioMode=Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation))
         except Exception as e:

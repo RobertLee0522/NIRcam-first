@@ -705,15 +705,13 @@ class CameraOperation:
     
                             # 發送處理後的影像信號（帶辨識框的）
                             if hasattr(signals, 'processed_image_ready'):
-                                # 轉回 BGR 供 Qt 顯示
-                                processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
-                                signals.processed_image_ready.emit(processed_image_bgr)
+                                # 直接發送 RGB 格式供 Qt 顯示
+                                signals.processed_image_ready.emit(processed_image)
     
                             # 發送原始影像信號（用於相機控制頁面顯示）
                             if hasattr(signals, 'original_image_ready'):
-                                # 發送翻轉後的 BGR 圖像
-                                original_display = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-                                signals.original_image_ready.emit(original_display)
+                                # 直接發送 RGB 格式
+                                signals.original_image_ready.emit(image_rgb)
     
                             # 發送文字結果信號
                             if hasattr(signals, 'detection_results_ready'):
@@ -732,11 +730,10 @@ class CameraOperation:
                         # ========================================
                         # 僅發送原始影像
                         if hasattr(signals, 'original_image_ready'):
-                            # 翻轉後發送
+                            # 翻轉後發送 RGB 格式
                             image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
                             image_rgb = cv2.flip(image_rgb, 1)
-                            display_image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-                            signals.original_image_ready.emit(display_image)
+                            signals.original_image_ready.emit(image_rgb)
                         
                         if hasattr(signals, 'detection_results_ready'):
                             no_ai_text = f"Frame: {self.st_frame_info.nFrameNum}\n"
