@@ -740,21 +740,65 @@ class CameraOperation:
                             
                             else:
                                 # ========================================
-                                # 原有的 TCP 發送方式（不使用觸發系統）
+                                # 邊界線過濾與 TCP 傳送（不使用觸發系統）
                                 # ========================================
+                                image_height = self.st_frame_info.nHeight
+                                image_width = self.st_frame_info.nWidth
+                                
+                                # 計算邊界線的像素位置
+                                top_line_y = int(image_height * boundary_line_top)
+                                bottom_line_y = int(image_height * boundary_line_bottom)
+                                
+                                # 過濾觸碰到邊界線的辨識結果
+                                filtered_boxes = []
+                                all_boxes_count = 0
+                                
+                                if results and hasattr(results[0], 'boxes') and len(results[0].boxes) > 0:
+                                    all_boxes_count = len(results[0].boxes)
+                                    if boundary_filter_enabled:
+                                        # 啟用過濾：只保留觸碰到邊界線的物件
+                                        filtered_boxes = filter_detections_by_boundary(results, image_height)
+                                    else:
+                                        # 未啟用過濾：保留所有物件
+                                        for box in results[0].boxes:
+                                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                                            cls = int(box.cls.item())
+                                            conf = float(box.conf.item())
+                                            filtered_boxes.append((cls, int(x1), int(y1), int(x2), int(y2), conf))
+                                
                                 # 發送辨識結果到 TCP 服務器
                                 if get_tcp_server is not None:
                                     tcp_server = get_tcp_server()
-                                    if tcp_server:
+                                    if tcp_server and len(filtered_boxes) > 0:
+                                        # 只有當有符合條件的物件時才傳送
+                                        tcp_server.send_filtered_detection_result(
+                                            filtered_boxes,
+                                            image_width, 
+                                            image_height
+                                        )
+                                    elif tcp_server and not boundary_filter_enabled:
+                                        # 未啟用過濾時，正常傳送所有結果
                                         tcp_server.send_detection_result(
                                             results, 
-                                            self.st_frame_info.nWidth, 
-                                            self.st_frame_info.nHeight
+                                            image_width, 
+                                            image_height
                                         )
 
                             # 準備辨識結果文字
                             detection_text_result = f"Frame: {self.st_frame_info.nFrameNum}\n"
                             detection_text_result += f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\n"
+                            detection_text_result += "------------------------------------\n"
+                            detection_text_result += f"邊界線過濾: {'啟用' if boundary_filter_enabled else '停用'}\n"
+                            
+                            # 計算邊界線位置（如果還沒計算）
+                            if 'image_height' not in locals():
+                                image_height = self.st_frame_info.nHeight
+                                image_width = self.st_frame_info.nWidth
+                                top_line_y = int(image_height * boundary_line_top)
+                                bottom_line_y = int(image_height * boundary_line_bottom)
+                            
+                            detection_text_result += f"上邊界線: {boundary_line_top:.1%} (Y={top_line_y}px)\n"
+                            detection_text_result += f"下邊界線: {boundary_line_bottom:.1%} (Y={bottom_line_y}px)\n"
                             detection_text_result += "------------------------------------\n"
     
                             if results and hasattr(results[0], 'boxes') and len(results[0].boxes) > 0:
@@ -763,21 +807,37 @@ class CameraOperation:
                                     processed_image = draw_custom_boxes(image_rgb.copy(), results)
                                 else:
                                     processed_image = image_rgb.copy()
+                                
+                                # 繪製邊界線
+                                processed_image = cv2.line(processed_image, (0, top_line_y), (image_width, top_line_y), (255, 255, 0), 3)  # 黃色上線
+                                processed_image = cv2.line(processed_image, (0, bottom_line_y), (image_width, bottom_line_y), (0, 255, 255), 3)  # 青色下線
     
                                 # 準備文字輸出結果
-                                detection_text_result += f"檢測到 {len(results[0].boxes)} 個物件:\n"
+                                if 'filtered_boxes' in locals():
+                                    detection_text_result += f"檢測到 {all_boxes_count} 個物件, 觸碰邊界線: {len(filtered_boxes)} 個:\n"
+                                else:
+                                    detection_text_result += f"檢測到 {len(results[0].boxes)} 個物件:\n"
+                                    
                                 for i, box in enumerate(results[0].boxes):
                                     class_id = int(box.cls.item())
                                     conf = box.conf.item()
                                     # 獲取邊界框座標
                                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                                    
+                                    # 檢查是否觸碰邊界線
+                                    touches_line = check_box_touches_boundary_lines(y1, y2, image_height)
+                                    status = "✓ 觸線" if touches_line else "✗ 未觸線"
+                                    
                                     detection_text_result += (
                                         f"  - 物件 {i+1}: Class ID={class_id}, "
                                         f"信心度={conf:.3f}, "
-                                        f"位置=({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f})\n"
+                                        f"位置=({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f}) [{status}]\n"
                                     )
                             else:
                                 processed_image = image_rgb.copy()
+                                # 即使沒有檢測結果，也繪製邊界線
+                                processed_image = cv2.line(processed_image, (0, top_line_y), (image_width, top_line_y), (255, 255, 0), 3)
+                                processed_image = cv2.line(processed_image, (0, bottom_line_y), (image_width, bottom_line_y), (0, 255, 255), 3)
                                 detection_text_result += "未檢測到任何物件。\n"
     
                             # 發送處理後的影像信號（帶辨識框的）
