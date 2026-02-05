@@ -51,6 +51,83 @@ auto_share_enabled = False
 # 新增：獲取AI參數的函數參考
 get_ai_parameters_func = None
 
+# 新增：邊界線過濾參數 (比例，0.0 ~ 1.0)
+boundary_line_top = 0.25      # 上邊界線位置 (從上往下的比例，預設在上緣 1/4 處)
+boundary_line_bottom = 0.75   # 下邊界線位置 (從上往下的比例，預設在下緣 1/4 處)
+boundary_filter_enabled = True  # 是否啟用邊界線過濾
+
+def set_boundary_line_positions(top_ratio, bottom_ratio):
+    """設定上下邊界線的位置（比例值 0.0 ~ 1.0）"""
+    global boundary_line_top, boundary_line_bottom
+    boundary_line_top = max(0.0, min(1.0, top_ratio))
+    boundary_line_bottom = max(0.0, min(1.0, bottom_ratio))
+    print(f"[邊界線] 已更新 - 上線: {boundary_line_top:.2%}, 下線: {boundary_line_bottom:.2%}")
+
+def get_boundary_line_positions():
+    """獲取上下邊界線的位置"""
+    return boundary_line_top, boundary_line_bottom
+
+def set_boundary_filter_enabled(enabled):
+    """設定是否啟用邊界線過濾"""
+    global boundary_filter_enabled
+    boundary_filter_enabled = enabled
+    print(f"[邊界線] 過濾功能: {'啟用' if enabled else '停用'}")
+
+def is_boundary_filter_enabled():
+    """檢查邊界線過濾是否啟用"""
+    return boundary_filter_enabled
+
+def check_box_touches_boundary_lines(y1, y2, image_height):
+    """
+    檢查邊界框是否觸碰到上下邊界線
+    
+    Args:
+        y1: 邊界框的上邊緣 y 座標
+        y2: 邊界框的下邊緣 y 座標  
+        image_height: 影像高度
+    
+    Returns:
+        bool: 如果邊界框觸碰到上線或下線，則回傳 True
+    """
+    top_line_y = int(image_height * boundary_line_top)
+    bottom_line_y = int(image_height * boundary_line_bottom)
+    
+    touches_top_line = (y1 <= top_line_y <= y2)
+    touches_bottom_line = (y1 <= bottom_line_y <= y2)
+    
+    return touches_top_line or touches_bottom_line
+
+def filter_detections_by_boundary(detections, image_height):
+    """
+    過濾辨識結果，只保留觸碰到邊界線的物件
+    
+    Args:
+        detections: YOLO 辨識結果
+        image_height: 影像高度
+    
+    Returns:
+        list: 過濾後的邊界框資訊 [(class_id, x1, y1, x2, y2, conf), ...]
+    """
+    filtered_boxes = []
+    
+    if not detections or len(detections) == 0:
+        return filtered_boxes
+    
+    for detection in detections:
+        if hasattr(detection, 'boxes') and detection.boxes is not None:
+            boxes = detection.boxes.xyxy.cpu().numpy()
+            confs = detection.boxes.conf.cpu().numpy()
+            classes = detection.boxes.cls.cpu().numpy()
+            
+            for (box, conf, cls) in zip(boxes, confs, classes):
+                x1, y1, x2, y2 = box
+                
+                if check_box_touches_boundary_lines(y1, y2, image_height):
+                    filtered_boxes.append((int(cls), int(x1), int(y1), int(x2), int(y2), float(conf)))
+    
+    return filtered_boxes
+
+
 def set_ai_parameters_func(func):
     """設定獲取AI參數的函數參考"""
     global get_ai_parameters_func
@@ -705,13 +782,15 @@ class CameraOperation:
     
                             # 發送處理後的影像信號（帶辨識框的）
                             if hasattr(signals, 'processed_image_ready'):
-                                # 直接發送 RGB 格式供 Qt 顯示
-                                signals.processed_image_ready.emit(processed_image)
+                                # 轉回 BGR 供 Qt 顯示
+                                processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
+                                signals.processed_image_ready.emit(processed_image_bgr)
     
                             # 發送原始影像信號（用於相機控制頁面顯示）
                             if hasattr(signals, 'original_image_ready'):
-                                # 直接發送 RGB 格式
-                                signals.original_image_ready.emit(image_rgb)
+                                # 發送翻轉後的 BGR 圖像
+                                original_display = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+                                signals.original_image_ready.emit(original_display)
     
                             # 發送文字結果信號
                             if hasattr(signals, 'detection_results_ready'):
@@ -730,10 +809,11 @@ class CameraOperation:
                         # ========================================
                         # 僅發送原始影像
                         if hasattr(signals, 'original_image_ready'):
-                            # 翻轉後發送 RGB 格式
+                            # 翻轉後發送
                             image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
                             image_rgb = cv2.flip(image_rgb, 1)
-                            signals.original_image_ready.emit(image_rgb)
+                            display_image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+                            signals.original_image_ready.emit(display_image)
                         
                         if hasattr(signals, 'detection_results_ready'):
                             no_ai_text = f"Frame: {self.st_frame_info.nFrameNum}\n"
