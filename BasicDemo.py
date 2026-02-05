@@ -641,7 +641,7 @@ if __name__ == "__main__":
     mainWindow = QMainWindow()
     ui = Ui_MainWindow()
     ui.setupUi(mainWindow)
-    mainWindow.setWindowTitle("工業相機 AI 檢測應用")
+    mainWindow.setWindowTitle("工業相機 AI 檢測應用 V1.5.0")
 
     # --- 修改 UI 佈局 ---
     
@@ -654,15 +654,22 @@ if __name__ == "__main__":
     display_layout = QVBoxLayout(ui.widgetDisplay)
     display_layout.addWidget(ui.originalDisplayLabel)
 
-    # 2. 建立新的 TCP 控制頁面佈局
+    # 2. 建立新的 TCP 控制頁面佈局 (左右分割)
     original_widget = mainWindow.centralWidget()
     tabs = QTabWidget()
     tabs.addTab(original_widget, "相機控制")
 
     tcp_widget = QWidget()
-    main_tcp_layout = QVBoxLayout(tcp_widget)
-
-    # 辨識結果顯示區 (上方)
+    main_tcp_layout = QHBoxLayout(tcp_widget)  # 改為水平佈局
+    
+    # =======================================
+    # 左側：辨識結果顯示區 (佔 60-70%)
+    # =======================================
+    left_panel = QWidget()
+    left_layout = QVBoxLayout(left_panel)
+    left_layout.setContentsMargins(5, 5, 5, 5)
+    
+    # 辨識影像顯示
     detection_display_group = QGroupBox("模型辨識結果")
     detection_display_layout = QVBoxLayout()
     
@@ -670,158 +677,228 @@ if __name__ == "__main__":
     ui.processedDisplayLabel.setObjectName("processedDisplayLabel")
     ui.processedDisplayLabel.setText("AI 辨識影像將顯示於此")
     ui.processedDisplayLabel.setAlignment(Qt.AlignCenter)
-    ui.processedDisplayLabel.setMinimumSize(640, 480) # 設定最小尺寸
-    detection_display_layout.addWidget(ui.processedDisplayLabel, 1) # 影像佔用更大空間
+    ui.processedDisplayLabel.setMinimumSize(400, 300)
+    ui.processedDisplayLabel.setStyleSheet("background-color: #1a1a2e; border: 2px solid #16213e; border-radius: 5px;")
+    detection_display_layout.addWidget(ui.processedDisplayLabel, 1)  # 影像佔用更大空間
 
+    # 辨識結果文字
     ui.detectionResultText = QTextEdit()
     ui.detectionResultText.setObjectName("detectionResultText")
     ui.detectionResultText.setReadOnly(True)
     ui.detectionResultText.setText("辨識結果文字...")
-    ui.detectionResultText.setMaximumHeight(150) # 限制文字區塊高度
+    ui.detectionResultText.setMaximumHeight(120)
+    ui.detectionResultText.setStyleSheet("background-color: #0f0f23; color: #00ff88; font-family: Consolas, monospace;")
     detection_display_layout.addWidget(ui.detectionResultText)
 
     detection_display_group.setLayout(detection_display_layout)
-    main_tcp_layout.addWidget(detection_display_group)
+    left_layout.addWidget(detection_display_group)
+    
+    # =======================================
+    # 右側：控制面板 (佔 30-40%，可捲動)
+    # =======================================
+    right_panel = QWidget()
+    right_layout = QVBoxLayout(right_panel)
+    right_layout.setContentsMargins(5, 5, 5, 5)
+    
+    # 使用 QScrollArea 讓控制面板可捲動
+    scroll_area = QScrollArea()
+    scroll_area.setWidgetResizable(True)
+    scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll_area.setStyleSheet("QScrollArea { border: none; }")
+    
+    # 控制面板容器
+    control_container = QWidget()
+    control_layout = QVBoxLayout(control_container)
+    control_layout.setSpacing(10)
 
-    # === 新增 AI 檢測參數控制區 ===
+    # === AI 檢測參數控制區 ===
     ai_param_group = QGroupBox("AI 檢測參數設定")
     ai_param_layout = QVBoxLayout()
     
-    # 參數輸入區
-    param_input_layout = QHBoxLayout()
-    param_input_layout.addWidget(QLabel("信心指數 (0.0-1.0):"))
+    # 參數輸入區 - 改為垂直排列以節省寬度
+    conf_layout = QHBoxLayout()
+    conf_layout.addWidget(QLabel("信心指數:"))
     ui.edtConfThres = QLineEdit(str(ai_conf_thres))
-    ui.edtConfThres.setMaximumWidth(80)
-    param_input_layout.addWidget(ui.edtConfThres)
+    ui.edtConfThres.setMaximumWidth(60)
+    conf_layout.addWidget(ui.edtConfThres)
+    conf_layout.addStretch()
+    ai_param_layout.addLayout(conf_layout)
     
-    param_input_layout.addWidget(QLabel("影像大小:"))
+    imgsz_layout = QHBoxLayout()
+    imgsz_layout.addWidget(QLabel("影像大小:"))
     ui.edtImgSize = QLineEdit(str(ai_imgsz))
-    ui.edtImgSize.setMaximumWidth(80)
-    param_input_layout.addWidget(ui.edtImgSize)
+    ui.edtImgSize.setMaximumWidth(60)
+    imgsz_layout.addWidget(ui.edtImgSize)
+    imgsz_layout.addStretch()
+    ai_param_layout.addLayout(imgsz_layout)
     
-    ui.bnUpdateAIParams = QPushButton("更新參數")
-    ui.bnResetAIParams = QPushButton("重設預設值")
-    param_input_layout.addWidget(ui.bnUpdateAIParams)
-    param_input_layout.addWidget(ui.bnResetAIParams)
-    param_input_layout.addStretch()
+    ai_btn_layout = QHBoxLayout()
+    ui.bnUpdateAIParams = QPushButton("更新")
+    ui.bnResetAIParams = QPushButton("重設")
+    ai_btn_layout.addWidget(ui.bnUpdateAIParams)
+    ai_btn_layout.addWidget(ui.bnResetAIParams)
+    ai_param_layout.addLayout(ai_btn_layout)
     
-    ai_param_layout.addLayout(param_input_layout)
-    
-    # 目前參數顯示
-    ui.lblCurrentParams = QLabel(f"目前參數 - 信心指數: {ai_conf_thres}, 影像大小: {ai_imgsz}")
-    ui.lblCurrentParams.setStyleSheet("color: blue; font-weight: bold;")
+    ui.lblCurrentParams = QLabel(f"信心: {ai_conf_thres}, 大小: {ai_imgsz}")
+    ui.lblCurrentParams.setStyleSheet("color: blue; font-size: 10px;")
     ai_param_layout.addWidget(ui.lblCurrentParams)
     
-    # 參數說明
-    param_info = QLabel("說明: 信心指數越低檢測越敏感，影像大小影響檢測精度和速度\n建議影像大小: 320 (快速), 640 (平衡), 1280 (精確)")
-    param_info.setStyleSheet("color: gray; font-size: 10px;")
-    ai_param_layout.addWidget(param_info)
-    
     ai_param_group.setLayout(ai_param_layout)
-    main_tcp_layout.addWidget(ai_param_group)
+    control_layout.addWidget(ai_param_group)
 
-    # === 新增 邊界線過濾設定區塊 ===
-    boundary_group = QGroupBox("邊界線過濾設定 (觸碰邊界線才傳送)")
+    # === 邊界線過濾設定區塊 ===
+    boundary_group = QGroupBox("邊界線過濾設定")
     boundary_layout = QVBoxLayout()
     
     # 啟用/停用邊界線過濾
-    ui.chkBoundaryFilterEnabled = QCheckBox("啟用邊界線過濾 (只傳送觸碰邊界線的辨識結果)")
+    ui.chkBoundaryFilterEnabled = QCheckBox("啟用邊界線過濾")
     ui.chkBoundaryFilterEnabled.setChecked(True)
     ui.chkBoundaryFilterEnabled.setStyleSheet("font-weight: bold;")
     boundary_layout.addWidget(ui.chkBoundaryFilterEnabled)
     
     # 上邊界線設定
     top_line_layout = QHBoxLayout()
-    top_line_layout.addWidget(QLabel("上邊界線位置 (從上往下):"))
+    top_line_layout.addWidget(QLabel("上線:"))
     ui.sliderTopLine = QSlider(Qt.Horizontal)
     ui.sliderTopLine.setMinimum(0)
     ui.sliderTopLine.setMaximum(100)
-    ui.sliderTopLine.setValue(25)  # 預設 25% (上緣 1/4 處)
-    ui.sliderTopLine.setTickPosition(QSlider.TicksBelow)
-    ui.sliderTopLine.setTickInterval(10)
+    ui.sliderTopLine.setValue(25)
     top_line_layout.addWidget(ui.sliderTopLine)
     ui.edtTopLinePercent = QLineEdit("25")
-    ui.edtTopLinePercent.setMaximumWidth(50)
+    ui.edtTopLinePercent.setMaximumWidth(40)
     top_line_layout.addWidget(ui.edtTopLinePercent)
     top_line_layout.addWidget(QLabel("%"))
     ui.lblTopLineColor = QLabel("■")
-    ui.lblTopLineColor.setStyleSheet("color: yellow; font-size: 18px; font-weight: bold;")
+    ui.lblTopLineColor.setStyleSheet("color: yellow; font-weight: bold;")
     top_line_layout.addWidget(ui.lblTopLineColor)
     boundary_layout.addLayout(top_line_layout)
     
     # 下邊界線設定
     bottom_line_layout = QHBoxLayout()
-    bottom_line_layout.addWidget(QLabel("下邊界線位置 (從上往下):"))
+    bottom_line_layout.addWidget(QLabel("下線:"))
     ui.sliderBottomLine = QSlider(Qt.Horizontal)
     ui.sliderBottomLine.setMinimum(0)
     ui.sliderBottomLine.setMaximum(100)
-    ui.sliderBottomLine.setValue(75)  # 預設 75% (下緣 1/4 處)
-    ui.sliderBottomLine.setTickPosition(QSlider.TicksBelow)
-    ui.sliderBottomLine.setTickInterval(10)
+    ui.sliderBottomLine.setValue(75)
     bottom_line_layout.addWidget(ui.sliderBottomLine)
     ui.edtBottomLinePercent = QLineEdit("75")
-    ui.edtBottomLinePercent.setMaximumWidth(50)
+    ui.edtBottomLinePercent.setMaximumWidth(40)
     bottom_line_layout.addWidget(ui.edtBottomLinePercent)
     bottom_line_layout.addWidget(QLabel("%"))
     ui.lblBottomLineColor = QLabel("■")
-    ui.lblBottomLineColor.setStyleSheet("color: cyan; font-size: 18px; font-weight: bold;")
+    ui.lblBottomLineColor.setStyleSheet("color: cyan; font-weight: bold;")
     bottom_line_layout.addWidget(ui.lblBottomLineColor)
     boundary_layout.addLayout(bottom_line_layout)
     
     # 按鈕區域
     boundary_btn_layout = QHBoxLayout()
-    ui.bnApplyBoundaryLines = QPushButton("套用邊界線設定")
-    ui.bnResetBoundaryLines = QPushButton("重設預設值")
+    ui.bnApplyBoundaryLines = QPushButton("套用")
+    ui.bnResetBoundaryLines = QPushButton("重設")
     boundary_btn_layout.addWidget(ui.bnApplyBoundaryLines)
     boundary_btn_layout.addWidget(ui.bnResetBoundaryLines)
-    boundary_btn_layout.addStretch()
     boundary_layout.addLayout(boundary_btn_layout)
     
     # 目前邊界線狀態
-    ui.lblBoundaryStatus = QLabel("目前邊界線: 上線 25%, 下線 75%")
-    ui.lblBoundaryStatus.setStyleSheet("color: blue; font-weight: bold;")
+    ui.lblBoundaryStatus = QLabel("上線 25%, 下線 75%")
+    ui.lblBoundaryStatus.setStyleSheet("color: blue; font-size: 10px;")
     boundary_layout.addWidget(ui.lblBoundaryStatus)
     
-    # 說明
-    boundary_info = QLabel("說明: 黃色線為上邊界，青色線為下邊界。只有邊界框觸碰到這兩條線之一時才會傳送辨識結果給 TCP/IP")
-    boundary_info.setStyleSheet("color: gray; font-size: 10px;")
-    boundary_info.setWordWrap(True)
-    boundary_layout.addWidget(boundary_info)
-    
     boundary_group.setLayout(boundary_layout)
-    main_tcp_layout.addWidget(boundary_group)
+    control_layout.addWidget(boundary_group)
 
-    # TCP 伺服器控制區 (下方)
+    # === TCP 伺服器控制區 ===
     tcp_control_group = QGroupBox("TCP 伺服器控制")
     tcp_control_layout = QVBoxLayout()
     
-    ip_layout = QHBoxLayout()
-    ip_layout.addWidget(QLabel("主機:"))
-    ui.edtTcpHost = QLineEdit("192.168.1.3")#localhost
-    ip_layout.addWidget(ui.edtTcpHost)
-    ip_layout.addWidget(QLabel("埠號:"))
-    ui.edtTcpPort = QLineEdit("8888")
-    ip_layout.addWidget(ui.edtTcpPort)
-    tcp_control_layout.addLayout(ip_layout)
+    host_layout = QHBoxLayout()
+    host_layout.addWidget(QLabel("主機:"))
+    ui.edtTcpHost = QLineEdit("192.168.1.3")
+    host_layout.addWidget(ui.edtTcpHost)
+    tcp_control_layout.addLayout(host_layout)
     
-    button_layout = QHBoxLayout()
-    ui.bnStartTCP = QPushButton("啟動 TCP 伺服器")
-    ui.bnStopTCP = QPushButton("停止 TCP 伺服器")
+    port_layout = QHBoxLayout()
+    port_layout.addWidget(QLabel("埠號:"))
+    ui.edtTcpPort = QLineEdit("8888")
+    port_layout.addWidget(ui.edtTcpPort)
+    tcp_control_layout.addLayout(port_layout)
+    
+    tcp_btn_layout = QHBoxLayout()
+    ui.bnStartTCP = QPushButton("啟動")
+    ui.bnStopTCP = QPushButton("停止")
     ui.bnStopTCP.setEnabled(False)
-    button_layout.addWidget(ui.bnStartTCP)
-    button_layout.addWidget(ui.bnStopTCP)
-    tcp_control_layout.addLayout(button_layout)
+    tcp_btn_layout.addWidget(ui.bnStartTCP)
+    tcp_btn_layout.addWidget(ui.bnStopTCP)
+    tcp_control_layout.addLayout(tcp_btn_layout)
     
     ui.lblTcpStatus = QLabel("TCP: 未連接")
-    ui.lblTcpStatus.setStyleSheet("color: red; font-weight: bold;")
+    ui.lblTcpStatus.setStyleSheet("color: red; font-weight: bold; font-size: 11px;")
     tcp_control_layout.addWidget(ui.lblTcpStatus)
     
-    format_label = QLabel("傳送格式: class_id,center_x,center_y,width,height,trigger_index")
-    format_label.setStyleSheet("color: blue; font-size: 10px;")
-    tcp_control_layout.addWidget(format_label)
-    
     tcp_control_group.setLayout(tcp_control_layout)
-    main_tcp_layout.addWidget(tcp_control_group)
+    control_layout.addWidget(tcp_control_group)
+    
+    # === 共享記憶體控制區塊 (簡化版) ===
+    shared_mem_group = QGroupBox("共享記憶體")
+    shared_mem_layout = QVBoxLayout()
+    
+    # 連接設定
+    host_conn_layout = QHBoxLayout()
+    host_conn_layout.addWidget(QLabel("IP:"))
+    ui.edtSharedMemHost = QLineEdit("127.0.0.1")
+    host_conn_layout.addWidget(ui.edtSharedMemHost)
+    shared_mem_layout.addLayout(host_conn_layout)
+    
+    port_conn_layout = QHBoxLayout()
+    port_conn_layout.addWidget(QLabel("埠號:"))
+    ui.edtSharedMemPort = QLineEdit("9999")
+    port_conn_layout.addWidget(ui.edtSharedMemPort)
+    shared_mem_layout.addLayout(port_conn_layout)
+    
+    # 控制按鈕
+    shared_btn_layout = QHBoxLayout()
+    ui.bnStartSharedMem = QPushButton("啟動")
+    ui.bnStopSharedMem = QPushButton("停止")
+    ui.bnStopSharedMem.setEnabled(False)
+    shared_btn_layout.addWidget(ui.bnStartSharedMem)
+    shared_btn_layout.addWidget(ui.bnStopSharedMem)
+    shared_mem_layout.addLayout(shared_btn_layout)
+    
+    ui.bnManualShare = QPushButton("手動分享")
+    ui.bnManualShare.setEnabled(False)
+    shared_mem_layout.addWidget(ui.bnManualShare)
+    
+    # 自動分享選項
+    ui.chkAutoShare = QCheckBox("自動分享")
+    ui.chkAutoShare.setChecked(False)
+    ui.chkAutoShare.setEnabled(False)
+    shared_mem_layout.addWidget(ui.chkAutoShare)
+    
+    # 狀態顯示
+    ui.lblSharedMemStatus = QLabel("未啟動")
+    ui.lblSharedMemStatus.setStyleSheet("color: red; font-size: 10px;")
+    shared_mem_layout.addWidget(ui.lblSharedMemStatus)
+    
+    shared_mem_group.setLayout(shared_mem_layout)
+    control_layout.addWidget(shared_mem_group)
+    
+    # 加入彈性空間
+    control_layout.addStretch()
+    
+    # 設定 scroll area
+    scroll_area.setWidget(control_container)
+    right_layout.addWidget(scroll_area)
+    
+    # =======================================
+    # 使用 QSplitter 分割左右面板
+    # =======================================
+    splitter = QSplitter(Qt.Horizontal)
+    splitter.addWidget(left_panel)
+    splitter.addWidget(right_panel)
+    splitter.setSizes([700, 300])  # 預設比例 70:30
+    splitter.setCollapsible(0, False)  # 左側不可收合
+    splitter.setCollapsible(1, False)  # 右側不可收合
+    
+    main_tcp_layout.addWidget(splitter)
 
     tabs.addTab(tcp_widget, "TCP 控制與辨識結果")
     mainWindow.setCentralWidget(tabs)
@@ -947,51 +1024,8 @@ if __name__ == "__main__":
     signals.original_image_ready.connect(update_original_display)
     signals.processed_image_ready.connect(update_processed_display)
     signals.detection_results_ready.connect(update_detection_text)
-        # === 共享記憶體控制區塊 ===
-    shared_mem_group = QGroupBox("共享記憶體控制（原始圖像分享）")
-    shared_mem_layout = QVBoxLayout()
-    
-    # 連接設定
-    connection_layout = QHBoxLayout()
-    connection_layout.addWidget(QLabel("接收端 IP:"))
-    ui.edtSharedMemHost = QLineEdit("127.0.0.1")
-    connection_layout.addWidget(ui.edtSharedMemHost)
-    connection_layout.addWidget(QLabel("埠號:"))
-    ui.edtSharedMemPort = QLineEdit("9999")
-    connection_layout.addWidget(ui.edtSharedMemPort)
-    shared_mem_layout.addLayout(connection_layout)
-    
-    # 控制按鈕
-    button_layout = QHBoxLayout()
-    ui.bnStartSharedMem = QPushButton("啟動共享記憶體")
-    ui.bnStopSharedMem = QPushButton("停止共享記憶體")
-    ui.bnStopSharedMem.setEnabled(False)
-    ui.bnManualShare = QPushButton("手動分享當前圖像")
-    ui.bnManualShare.setEnabled(False)
-    button_layout.addWidget(ui.bnStartSharedMem)
-    button_layout.addWidget(ui.bnStopSharedMem)
-    button_layout.addWidget(ui.bnManualShare)
-    shared_mem_layout.addLayout(button_layout)
-    
-    # 自動分享選項
-    ui.chkAutoShare = QCheckBox("自動分享每一幀（實時傳輸）")
-    ui.chkAutoShare.setChecked(False)
-    ui.chkAutoShare.setEnabled(False)
-    shared_mem_layout.addWidget(ui.chkAutoShare)
-    
-    # 狀態顯示
-    ui.lblSharedMemStatus = QLabel("共享記憶體: 未啟動")
-    ui.lblSharedMemStatus.setStyleSheet("color: red; font-weight: bold;")
-    shared_mem_layout.addWidget(ui.lblSharedMemStatus)
-    
-    info_label = QLabel("說明: 共享記憶體用於將原始圖像傳送給其他本機程式（如 LabVIEW）")
-    info_label.setStyleSheet("color: gray; font-size: 10px;")
-    shared_mem_layout.addWidget(info_label)
-    
-    shared_mem_group.setLayout(shared_mem_layout)
-    main_tcp_layout.addWidget(shared_mem_group)
 
-    # 連接共享記憶體相關信號
+    # === 連接共享記憶體相關信號 ===
     ui.bnStartSharedMem.clicked.connect(start_shared_memory)
     ui.bnStopSharedMem.clicked.connect(stop_shared_memory)
     ui.bnManualShare.clicked.connect(manual_share_current_frame)
