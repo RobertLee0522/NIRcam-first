@@ -56,6 +56,10 @@ boundary_line_top = 0.25      # 上邊界線位置 (從上往下的比例，預�
 boundary_line_bottom = 0.75   # 下邊界線位置 (從上往下的比例，預設在下緣 1/4 處)
 boundary_filter_enabled = True  # 是否啟用邊界線過濾
 
+# 新增：圖片儲存控制參數
+image_save_enabled = False  # 是否啟用圖片儲存
+image_save_path = ""  # 圖片儲存路徑
+
 def set_boundary_line_positions(top_ratio, bottom_ratio):
     """設定上下邊界線的位置（比例值 0.0 ~ 1.0）"""
     global boundary_line_top, boundary_line_bottom
@@ -76,6 +80,22 @@ def set_boundary_filter_enabled(enabled):
 def is_boundary_filter_enabled():
     """檢查邊界線過濾是否啟用"""
     return boundary_filter_enabled
+
+def set_image_save_enabled(enabled):
+    """設定是否啟用圖片儲存"""
+    global image_save_enabled
+    image_save_enabled = enabled
+    print(f"[圖片儲存] 儲存功能: {'啟用' if enabled else '停用'}")
+
+def set_image_save_path(path):
+    """設定圖片儲存路徑"""
+    global image_save_path
+    image_save_path = path
+    print(f"[圖片儲存] 儲存路徑: {path}")
+
+def get_image_save_settings():
+    """獲取圖片儲存設定"""
+    return image_save_enabled, image_save_path
 
 def check_box_touches_boundary_lines(y1, y2, image_height):
     """
@@ -672,16 +692,19 @@ class CameraOperation:
                             # 執行左右翻轉（針對 AI 辨識）
                             image_rgb = cv2.flip(image_rgb, 1)
                             
-                            # 儲存圖像（可選）
-                            save_dir = r"D:\savefile"
-                            today = datetime.datetime.now().strftime("%Y%m%d")
-                            save_dir = os.path.join(save_dir, today)
-                            os.makedirs(save_dir, exist_ok=True)
-                            
-                            now = datetime.datetime.now()
-                            timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]
-                            filename = os.path.join(save_dir, f"image_{timestamp}.jpg")
-                            cv2.imwrite(filename, cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR))
+                            # 儲存圖像（根據設定決定是否儲存）
+                            if image_save_enabled and image_save_path:
+                                try:
+                                    today = datetime.datetime.now().strftime("%Y%m%d")
+                                    save_dir = os.path.join(image_save_path, today)
+                                    os.makedirs(save_dir, exist_ok=True)
+                                    
+                                    now = datetime.datetime.now()
+                                    timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                                    filename = os.path.join(save_dir, f"image_{timestamp}.jpg")
+                                    cv2.imwrite(filename, cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR))
+                                except Exception as e:
+                                    print(f"[圖片儲存] 儲存失敗: {e}")
                             
                             # 獲取當前的AI參數
                             conf_thres = 0.4  # 默認值

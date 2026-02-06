@@ -20,7 +20,10 @@ from CamOperation_class import (
     set_boundary_line_positions, 
     get_boundary_line_positions, 
     set_boundary_filter_enabled, 
-    is_boundary_filter_enabled
+    is_boundary_filter_enabled,
+    set_image_save_enabled,
+    set_image_save_path,
+    get_image_save_settings
 )
 
 # --- 新增: 用於跨執行緒通訊的訊號發射器 ---
@@ -641,7 +644,7 @@ if __name__ == "__main__":
     mainWindow = QMainWindow()
     ui = Ui_MainWindow()
     ui.setupUi(mainWindow)
-    mainWindow.setWindowTitle("工業相機 AI 檢測應用 V1.5.0")
+    mainWindow.setWindowTitle("工業相機 AI 檢測應用 V1.5.1")
 
     # --- 修改 UI 佈局 ---
     
@@ -745,6 +748,38 @@ if __name__ == "__main__":
     
     ai_param_group.setLayout(ai_param_layout)
     control_layout.addWidget(ai_param_group)
+
+    # === 圖片儲存控制區 ===
+    image_save_group = QGroupBox("圖片儲存設定")
+    image_save_layout = QVBoxLayout()
+    
+    # 啟用/停用圖片儲存
+    ui.chkImageSaveEnabled = QCheckBox("啟用圖片儲存")
+    ui.chkImageSaveEnabled.setChecked(False)
+    ui.chkImageSaveEnabled.setStyleSheet("font-weight: bold;")
+    image_save_layout.addWidget(ui.chkImageSaveEnabled)
+    
+    # 儲存路徑選擇
+    path_layout = QHBoxLayout()
+    ui.bnSelectSavePath = QPushButton("選擇路徑")
+    ui.bnSelectSavePath.setMaximumWidth(80)
+    path_layout.addWidget(ui.bnSelectSavePath)
+    path_layout.addStretch()
+    image_save_layout.addLayout(path_layout)
+    
+    # 目前儲存路徑顯示
+    ui.lblSavePath = QLabel("未設定儲存路徑")
+    ui.lblSavePath.setStyleSheet("color: gray; font-size: 9px; padding: 5px; background-color: #f0f0f0; border-radius: 3px;")
+    ui.lblSavePath.setWordWrap(True)
+    image_save_layout.addWidget(ui.lblSavePath)
+    
+    # 狀態顯示
+    ui.lblImageSaveStatus = QLabel("儲存: 停用")
+    ui.lblImageSaveStatus.setStyleSheet("color: red; font-size: 10px;")
+    image_save_layout.addWidget(ui.lblImageSaveStatus)
+    
+    image_save_group.setLayout(image_save_layout)
+    control_layout.addWidget(image_save_group)
 
     # === 邊界線過濾設定區塊 ===
     boundary_group = QGroupBox("邊界線過濾設定")
@@ -923,6 +958,55 @@ if __name__ == "__main__":
     # === 新增 AI 參數控制按鈕事件 ===
     ui.bnUpdateAIParams.clicked.connect(update_ai_parameters)
     ui.bnResetAIParams.clicked.connect(reset_ai_parameters)
+
+    # === 新增 圖片儲存控制事件處理函數 ===
+    def select_save_path():
+        """選擇圖片儲存路徑"""
+        folder = QFileDialog.getExistingDirectory(
+            mainWindow, 
+            "選擇圖片儲存資料夾",
+            "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if folder:
+            set_image_save_path(folder)
+            ui.lblSavePath.setText(f"路徑: {folder}")
+            ui.lblSavePath.setStyleSheet("color: green; font-size: 9px; padding: 5px; background-color: #e8f5e9; border-radius: 3px;")
+            
+            # 如果已經勾選啟用，則更新狀態
+            if ui.chkImageSaveEnabled.isChecked():
+                ui.lblImageSaveStatus.setText(f"儲存: 啟用")
+                ui.lblImageSaveStatus.setStyleSheet("color: green; font-weight: bold; font-size: 10px;")
+    
+    def toggle_image_save():
+        """切換圖片儲存功能"""
+        enabled = ui.chkImageSaveEnabled.isChecked()
+        
+        if enabled:
+            # 檢查是否已設定路徑
+            _, current_path = get_image_save_settings()
+            if not current_path:
+                QMessageBox.warning(mainWindow, "圖片儲存", 
+                    "請先選擇儲存路徑！")
+                ui.chkImageSaveEnabled.setChecked(False)
+                return
+            
+            set_image_save_enabled(True)
+            ui.lblImageSaveStatus.setText("儲存: 啟用")
+            ui.lblImageSaveStatus.setStyleSheet("color: green; font-weight: bold; font-size: 10px;")
+            QMessageBox.information(mainWindow, "圖片儲存", 
+                f"✅ 已啟用圖片儲存\n\n儲存路徑: {current_path}\n\n圖片將按日期分類儲存")
+        else:
+            set_image_save_enabled(False)
+            ui.lblImageSaveStatus.setText("儲存: 停用")
+            ui.lblImageSaveStatus.setStyleSheet("color: red; font-size: 10px;")
+            QMessageBox.information(mainWindow, "圖片儲存", 
+                "⏸ 已停用圖片儲存")
+    
+    # 連接圖片儲存控制事件
+    ui.bnSelectSavePath.clicked.connect(select_save_path)
+    ui.chkImageSaveEnabled.stateChanged.connect(toggle_image_save)
 
     # === 新增 邊界線設定事件處理函數 ===
     def update_top_line_from_slider():
