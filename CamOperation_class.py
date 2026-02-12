@@ -613,10 +613,10 @@ class CameraOperation:
                     # 打印幀信息
                     print(f"Frame: {self.st_frame_info.nFrameNum}, "
                           f"Size: {self.st_frame_info.nWidth}x{self.st_frame_info.nHeight}, "
-                          f"PixelType: {self.st_frame_info.enPixelType}")
+                          f"PixelType: {self.st_frame_info.enPixelType} (0x{self.st_frame_info.enPixelType:08X})")
     
                     # ========================================
-                    # 第一步：影像格式轉換（從 Bayer/Mono 轉為 BGR）
+                    # 第一步：影像格式轉換（從 Bayer/Mono 轉為 RGB）
                     # ========================================
                     try:
                         raw_image = np.asarray(self.buf_grab_image).reshape(
@@ -625,18 +625,23 @@ class CameraOperation:
                         
                         # 根據像素格式進行轉換
                         if Is_color_data(self.st_frame_info.enPixelType):
-                            # 彩色圖像 - 從 Bayer 格式轉換為 BGR
+                            # 彩色圖像 - 從 Bayer 格式直接轉換為 RGB
+                            # 注意：嘗試使用 BG 格式來修正紅藍通道互換問題
                             if self.st_frame_info.enPixelType == PixelType_Gvsp_BayerRG8:
-                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_RG2BGR)
+                                # RG8 使用 BG2RGB 轉換（紅藍互換）
+                                image_rgb = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_BG2RGB)
                             elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerGR8:
-                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_GR2BGR)
+                                # GR8 使用 GB2RGB 轉換（紅藍互換）
+                                image_rgb = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_GB2RGB)
                             elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerGB8:
-                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_GB2BGR)
+                                # GB8 使用 GR2RGB 轉換（紅藍互換）
+                                image_rgb = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_GR2RGB)
                             elif self.st_frame_info.enPixelType == PixelType_Gvsp_BayerBG8:
-                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_BG2BGR)
+                                # BG8 使用 RG2RGB 轉換（紅藍互換）
+                                image_rgb = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_RG2RGB)
                             else:
-                                # 默認使用 RG8
-                                image_bgr = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_RG2BGR)
+                                # 默認使用 BG8（而不是 RG8）
+                                image_rgb = cv2.cvtColor(raw_image, cv2.COLOR_BAYER_BG2RGB)
                         elif Is_mono_data(self.st_frame_info.enPixelType):
                             # 單色影像轉換為 3 通道供後續處理
                             mono_array = Mono_numpy(
@@ -644,7 +649,8 @@ class CameraOperation:
                                 self.st_frame_info.nWidth, 
                                 self.st_frame_info.nHeight
                             )
-                            image_bgr = cv2.cvtColor(mono_array.squeeze(), cv2.COLOR_GRAY2BGR)
+                            # 單色轉 RGB（三個通道相同）
+                            image_rgb = cv2.cvtColor(mono_array.squeeze(), cv2.COLOR_GRAY2RGB)
                         else:
                             # 未知格式，跳過此幀
                             print(f"Unsupported pixel format: {self.st_frame_info.enPixelType}")
@@ -659,8 +665,8 @@ class CameraOperation:
                     # ========================================
                     if auto_share_enabled and shared_memory_sender is not None:
                         try:
-                            # 複製圖像以避免干擾後續處理
-                            image_for_sharing = image_bgr.copy()
+                            # 複製圖像並轉換為 BGR 格式（共享記憶體可能需要 BGR）
+                            image_for_sharing = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
                             
                             # 執行您需要的預處理（例如翻轉）
                             # 注意：這裡的翻轉是針對共享記憶體的，不影響AI辨識
@@ -686,11 +692,9 @@ class CameraOperation:
                     # ========================================
                     if ai_model is not None and detect_objects is not None:
                         try:
-                            # 轉換為 RGB 供 YOLO 使用
-                            image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-                            
+                            # image_rgb 已經是 RGB 格式，直接使用
                             # 執行左右翻轉（針對 AI 辨識）
-                            image_rgb = cv2.flip(image_rgb, 1)
+                            image_rgb_flipped = cv2.flip(image_rgb, 1)
                             
                             # 儲存圖像（根據設定決定是否儲存）
                             if image_save_enabled and image_save_path:
@@ -702,7 +706,7 @@ class CameraOperation:
                                     now = datetime.datetime.now()
                                     timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]
                                     filename = os.path.join(save_dir, f"image_{timestamp}.jpg")
-                                    cv2.imwrite(filename, cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR))
+                                    cv2.imwrite(filename, cv2.cvtColor(image_rgb_flipped, cv2.COLOR_RGB2BGR))
                                 except Exception as e:
                                     print(f"[圖片儲存] 儲存失敗: {e}")
                             
@@ -717,7 +721,7 @@ class CameraOperation:
                                     print(f"Error getting AI parameters, using defaults: {e}")
                             
                             # 執行 AI 辨識
-                            results = detect_objects(ai_model, image_rgb, conf_thres=conf_thres, imgsz=imgsz)
+                            results = detect_objects(ai_model, image_rgb_flipped, conf_thres=conf_thres, imgsz=imgsz)
                             
                             # ========================================
                             # Two-Band Filter 觸發系統處理
@@ -827,9 +831,9 @@ class CameraOperation:
                             if results and hasattr(results[0], 'boxes') and len(results[0].boxes) > 0:
                                 # 在影像上繪製檢測框
                                 if draw_custom_boxes is not None:
-                                    processed_image = draw_custom_boxes(image_rgb.copy(), results)
+                                    processed_image = draw_custom_boxes(image_rgb_flipped.copy(), results)
                                 else:
-                                    processed_image = image_rgb.copy()
+                                    processed_image = image_rgb_flipped.copy()
                                 
                                 # 繪製邊界線
                                 processed_image = cv2.line(processed_image, (0, top_line_y), (image_width, top_line_y), (255, 255, 0), 3)  # 黃色上線
@@ -857,7 +861,7 @@ class CameraOperation:
                                         f"位置=({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f}) [{status}]\n"
                                     )
                             else:
-                                processed_image = image_rgb.copy()
+                                processed_image = image_rgb_flipped.copy()
                                 # 即使沒有檢測結果，也繪製邊界線
                                 processed_image = cv2.line(processed_image, (0, top_line_y), (image_width, top_line_y), (255, 255, 0), 3)
                                 processed_image = cv2.line(processed_image, (0, bottom_line_y), (image_width, bottom_line_y), (0, 255, 255), 3)
@@ -865,14 +869,14 @@ class CameraOperation:
     
                             # 發送處理後的影像信號（帶辨識框的）
                             if hasattr(signals, 'processed_image_ready'):
-                                # 轉回 BGR 供 Qt 顯示
+                                # 轉成 BGR 格式發送
                                 processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
                                 signals.processed_image_ready.emit(processed_image_bgr)
     
                             # 發送原始影像信號（用於相機控制頁面顯示）
                             if hasattr(signals, 'original_image_ready'):
-                                # 發送翻轉後的 BGR 圖像
-                                original_display = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+                                # 轉成 BGR 格式發送
+                                original_display = cv2.cvtColor(image_rgb_flipped, cv2.COLOR_RGB2BGR)
                                 signals.original_image_ready.emit(original_display)
     
                             # 發送文字結果信號
@@ -892,10 +896,9 @@ class CameraOperation:
                         # ========================================
                         # 僅發送原始影像
                         if hasattr(signals, 'original_image_ready'):
-                            # 翻轉後發送
-                            image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-                            image_rgb = cv2.flip(image_rgb, 1)
-                            display_image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+                            # 翻轉並轉成 BGR 格式發送
+                            image_rgb_flipped = cv2.flip(image_rgb, 1)
+                            display_image = cv2.cvtColor(image_rgb_flipped, cv2.COLOR_RGB2BGR)
                             signals.original_image_ready.emit(display_image)
                         
                         if hasattr(signals, 'detection_results_ready'):
