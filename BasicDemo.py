@@ -579,6 +579,46 @@ if __name__ == "__main__":
         ret = obj_cam_operation.Set_parameter(ui.edtFrameRate.text(), ui.edtExposureTime.text(), ui.edtGain.text())
         return ret
 
+    def select_save_path():
+        """選擇圖片儲存路徑"""
+        from PyQt5.QtWidgets import QFileDialog
+        from CamOperation_class import set_image_save_path
+        
+        path = QFileDialog.getExistingDirectory(mainWindow, "選擇圖片儲存資料夾", "")
+        if path:
+            set_image_save_path(path)
+            ui.lblSavePath.setText(path)
+            ui.lblSavePath.setStyleSheet("color: green; font-size: 9px; word-wrap: break-word;")
+            QMessageBox.information(mainWindow, "路徑設定", f"圖片儲存路徑已設定為：\n{path}")
+    
+    def toggle_image_save():
+        """切換圖片儲存功能"""
+        from CamOperation_class import set_image_save_enabled, get_image_save_settings
+        
+        enabled, path = get_image_save_settings()
+        
+        if ui.chkImageSaveEnabled.isChecked():
+            # 嘗試啟用
+            if not path:
+                QMessageBox.warning(mainWindow, "警告", "請先選擇儲存路徑！")
+                ui.chkImageSaveEnabled.setChecked(False)
+                return
+            
+            set_image_save_enabled(True)
+            ui.lblImageSaveStatus.setText("儲存: 啟用")
+            ui.lblImageSaveStatus.setStyleSheet("color: green; font-weight: bold; font-size: 10px;")
+            QMessageBox.information(
+                mainWindow, 
+                "圖片儲存已啟用", 
+                f"圖片將自動儲存至：\n{path}\n\n"
+                "檔案將按日期分類（格式：YYYYMMDD/image_YYYYMMDD_HHMMSS_mmm.jpg）"
+            )
+        else:
+            # 停用
+            set_image_save_enabled(False)
+            ui.lblImageSaveStatus.setText("儲存: 停用")
+            ui.lblImageSaveStatus.setStyleSheet("color: red; font-weight: bold; font-size: 10px;")
+
     def enable_controls():
         ui.groupGrab.setEnabled(isOpen)
         ui.groupParam.setEnabled(isOpen)
@@ -640,7 +680,7 @@ if __name__ == "__main__":
     mainWindow = QMainWindow()
     ui = Ui_MainWindow()
     ui.setupUi(mainWindow)
-    mainWindow.setWindowTitle("工業相機 AI 檢測應用 V1.5.2")
+    mainWindow.setWindowTitle("工業相機 AI 檢測應用 V1.5.3")
 
     # --- 修改 UI 佈局 ---
     
@@ -880,6 +920,33 @@ if __name__ == "__main__":
     shared_mem_group.setLayout(shared_mem_layout)
     control_layout.addWidget(shared_mem_group)
     
+    # === 圖片儲存設定區塊 ===
+    image_save_group = QGroupBox("圖片儲存設定")
+    image_save_layout = QVBoxLayout()
+    
+    # 啟用開關
+    ui.chkImageSaveEnabled = QCheckBox("啟用圖片儲存")
+    ui.chkImageSaveEnabled.setChecked(False)
+    image_save_layout.addWidget(ui.chkImageSaveEnabled)
+    
+    # 選擇路徑按鈕
+    ui.bnSelectSavePath = QPushButton("選擇路徑")
+    image_save_layout.addWidget(ui.bnSelectSavePath)
+    
+    # 路徑顯示標籤
+    ui.lblSavePath = QLabel("未設定路徑")
+    ui.lblSavePath.setStyleSheet("color: gray; font-size: 9px; word-wrap: break-word;")
+    ui.lblSavePath.setWordWrap(True)
+    image_save_layout.addWidget(ui.lblSavePath)
+    
+    # 狀態標籤
+    ui.lblImageSaveStatus = QLabel("儲存: 停用")
+    ui.lblImageSaveStatus.setStyleSheet("color: red; font-weight: bold; font-size: 10px;")
+    image_save_layout.addWidget(ui.lblImageSaveStatus)
+    
+    image_save_group.setLayout(image_save_layout)
+    control_layout.addWidget(image_save_group)
+    
     # 加入彈性空間
     control_layout.addStretch()
     
@@ -1029,6 +1096,10 @@ if __name__ == "__main__":
     ui.bnStopSharedMem.clicked.connect(stop_shared_memory)
     ui.bnManualShare.clicked.connect(manual_share_current_frame)
     ui.chkAutoShare.stateChanged.connect(toggle_auto_share)
+    
+    # === 連接圖片儲存相關按鈕事件 ===
+    ui.bnSelectSavePath.clicked.connect(select_save_path)
+    ui.chkImageSaveEnabled.stateChanged.connect(toggle_image_save)
     shared_mem_timer = QTimer()
     shared_mem_timer.timeout.connect(update_shared_memory_ui)
     shared_mem_timer.start(1000)  # 每秒更新一次
