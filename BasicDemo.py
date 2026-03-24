@@ -469,8 +469,9 @@ if __name__ == "__main__":
                 obj_cam_operation.buf_lock.release()
             raise e
 
-        # 3. 圖像處理：執行翻轉操作
-        image_bgr = cv2.flip(image_bgr, 1)  # 左右翻轉
+        # 3. 圖像處理：
+        # 不執行翻轉操作
+        image_bgr = image_bgr
 
         # 4. 發送到共享記憶體
         shared_trigger_count += 1

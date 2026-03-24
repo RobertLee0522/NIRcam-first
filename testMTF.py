@@ -289,16 +289,32 @@ def main(camera_id: int, cap_w: int, cap_h: int):
             print("Frame read failed, retrying...")
             time.sleep(0.05)
             continue
-
+        
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # ── Metric update (not every frame for performance) ──
         if frame_count % UPDATE_EVERY == 0:
-            mtf_val  = compute_mtf50(gray)
+            h_g, w_g = gray.shape
+            rois = {
+                "Center": (h_g//3, 2*h_g//3, w_g//3, 2*w_g//3),
+                "TL": (0, h_g//3, 0, w_g//3),
+                "TR": (0, h_g//3, 2*w_g//3, w_g),
+                "BL": (2*h_g//3, h_g, 0, w_g//3),
+                "BR": (2*h_g//3, h_g, 2*w_g//3, w_g)
+            }
+            mtf_curr = {}
+            for name, (ry1, ry2, rx1, rx2) in rois.items():
+                roi_gray = gray[ry1:ry2, rx1:rx2]
+                val = compute_mtf50(roi_gray)
+                if val is not None:
+                    mtf_curr[name] = val
+                    
+            if mtf_curr:
+                mtf_hist.append(mtf_curr)
+
             dist_val = compute_distortion(gray)
             exp_data = compute_exposure(gray)
 
-            if mtf_val  is not None: mtf_hist.append(mtf_val)
             if dist_val is not None: dist_hist.append(dist_val)
             if "mean" in exp_data:   exp_hist.append(exp_data["mean"])
 
@@ -323,6 +339,12 @@ def main(camera_id: int, cap_w: int, cap_h: int):
         cv2.putText(canvas, f"FPS {fps_val:.1f}", (10, fh - 12),
                     FONT, 0.5, C["dim"], 1, cv2.LINE_AA)
 
+        # Draw 3x3 grid to indicate the 5 ROIs (Center + 4 Corners)
+        cv2.line(canvas, (fw//3, 0), (fw//3, fh), (80,80,80), 1)
+        cv2.line(canvas, (2*fw//3, 0), (2*fw//3, fh), (80,80,80), 1)
+        cv2.line(canvas, (0, fh//3), (fw, fh//3), (80,80,80), 1)
+        cv2.line(canvas, (0, 2*fh//3), (fw, 2*fh//3), (80,80,80), 1)
+
         # ── Right panel background ──
         px = fw   # panel x offset
         cv2.rectangle(canvas, (px, 0), (total_w, fh), C["bg"], -1)
@@ -340,30 +362,52 @@ def main(camera_id: int, cap_w: int, cap_h: int):
         # ════════════════════════════════
         #  MTF50 PANEL
         # ════════════════════════════════
-        draw_panel(canvas, px + 8, y_cursor, PW, 110, "MTF50  (Sharpness)")
+        draw_panel(canvas, px + 8, y_cursor, PW, 190, "MTF50  (5 ROIs)")
 
-        mtf_avg = np.mean(mtf_hist) if mtf_hist else None
-        if mtf_avg is not None:
-            # Convert to lp/ph (lines pairs per picture height)
-            lp_ph = mtf_avg * fh
-            col   = rating_color(lp_ph, fh * 0.1, fh * 0.4)
+        if mtf_hist:
+            avg_mtf = {}
+            for key in ["Center", "TL", "TR", "BL", "BR"]:
+                vals = [m[key] for m in mtf_hist if key in m]
+                if vals:
+                    avg_mtf[key] = np.mean(vals)
+            
+            if "Center" in avg_mtf:
+                center_lp = avg_mtf["Center"] * fh
+                col = rating_color(center_lp, fh * 0.1, fh * 0.4)
+                cv2.putText(canvas, f"Center: {center_lp:.0f} lp/ph", (px + 18, y_cursor + 45), FONT, 0.7, col, 2, cv2.LINE_AA)
+                cv2.putText(canvas, f"({avg_mtf['Center']:.3f} cy/px)", (px + 220, y_cursor + 45), FONT, 0.4, C["dim"], 1)
+            else:
+                cv2.putText(canvas, "Center: Detecting...", (px + 18, y_cursor + 45), FONT, 0.6, C["warn"], 1)
 
-            cv2.putText(canvas, f"{lp_ph:.0f}", (px + 18, y_cursor + 65),
-                        FONT, 1.6, col, 2, cv2.LINE_AA)
-            cv2.putText(canvas, "lp/ph", (px + 18, y_cursor + 85),
-                        FONT, 0.4, C["dim"], 1, cv2.LINE_AA)
+            c_y = y_cursor + 80
+            corner_lps = []
+            for i, key in enumerate(["TL", "TR", "BL", "BR"]):
+                col_offset = (i % 2) * 160
+                row_offset = (i // 2) * 25
+                if key in avg_mtf:
+                    val = avg_mtf[key] * fh
+                    corner_lps.append(val)
+                    cv2.putText(canvas, f"{key}: {val:.0f}", (px + 18 + col_offset, c_y + row_offset), FONT, 0.5, C["text"], 1)
+                else:
+                    cv2.putText(canvas, f"{key}: --", (px + 18 + col_offset, c_y + row_offset), FONT, 0.5, C["dim"], 1)
 
-            # Also show cy/px
-            cv2.putText(canvas, f"cy/px {mtf_avg:.3f}", (px + 120, y_cursor + 65),
-                        FONT, 0.45, C["dim"], 1, cv2.LINE_AA)
+            if "Center" in avg_mtf and corner_lps:
+                center_lp = avg_mtf["Center"] * fh
+                corner_avg = np.mean(corner_lps)
+                ratio = (corner_avg / center_lp) * 100 if center_lp > 0 else 0
+                r_col = C["good"] if ratio >= 80 else C["bad"]
+                cv2.putText(canvas, f"Corner/Center Ratio: {ratio:.1f}%", (px + 18, c_y + 60), FONT, 0.5, r_col, 1)
 
-            draw_bar(canvas, px + 18, y_cursor + 90, PW - 20, 10,
-                     lp_ph, 0, fh * 0.5, col)
+            if len(corner_lps) == 4:
+                std_dev = np.std(corner_lps)
+                s_col = C["good"] if std_dev < 50 else C["warn"]
+                cv2.putText(canvas, f"Tilt (Corners StdDev): {std_dev:.1f}", (px + 18, c_y + 85), FONT, 0.5, s_col, 1)
+
         else:
-            cv2.putText(canvas, "Detecting edge...", (px + 18, y_cursor + 60),
+            cv2.putText(canvas, "Detecting edges in ROIs...", (px + 18, y_cursor + 60),
                         FONT, 0.45, C["dim"], 1, cv2.LINE_AA)
 
-        y_cursor += 120
+        y_cursor += 200
 
         # ════════════════════════════════
         #  DISTORTION PANEL

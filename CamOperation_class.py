@@ -323,6 +323,12 @@ class CameraOperation:
             ret = self.obj_cam.MV_CC_SetFloatValue("Gamma", 1.0)
             if ret != 0:
                 print("set Gamma failed:", ret)
+            
+            # 強制關閉硬體翻轉 (確保沒有水平翻轉)
+            ret_x = self.obj_cam.MV_CC_SetBoolValue("ReverseX", False)
+            ret_y = self.obj_cam.MV_CC_SetBoolValue("ReverseY", False)
+            if ret_x == 0 and ret_y == 0:
+                print("Hardware ReverseX/Y set to False successfully")
             # =======================================
     
             if stDeviceList.nTLayerType == MV_GIGE_DEVICE:
@@ -668,9 +674,9 @@ class CameraOperation:
                             # 複製圖像並轉換為 BGR 格式（共享記憶體可能需要 BGR）
                             image_for_sharing = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
                             
-                            # 執行您需要的預處理（例如翻轉）
-                            # 注意：這裡的翻轉是針對共享記憶體的，不影響AI辨識
-                            image_for_sharing = cv2.flip(image_for_sharing, 1)  # 左右翻轉
+                            # 執行您需要的預處理
+                            # 目前不執行鏡像翻轉
+                            image_for_sharing = image_for_sharing
                             
                             # 發送到共享記憶體
                             if hasattr(shared_memory_sender, 'trigger_count'):
@@ -693,8 +699,8 @@ class CameraOperation:
                     if ai_model is not None and detect_objects is not None:
                         try:
                             # image_rgb 已經是 RGB 格式，直接使用
-                            # 執行左右翻轉（針對 AI 辨識）
-                            image_rgb_flipped = cv2.flip(image_rgb, 1)
+                            # 使用原始影像進行處理（不翻轉）
+                            image_rgb_processed = image_rgb
                             
                             # 儲存圖像（根據設定決定是否儲存）
                             if image_save_enabled and image_save_path:
@@ -706,7 +712,7 @@ class CameraOperation:
                                     now = datetime.datetime.now()
                                     timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]
                                     filename = os.path.join(save_dir, f"image_{timestamp}.jpg")
-                                    cv2.imwrite(filename, cv2.cvtColor(image_rgb_flipped, cv2.COLOR_RGB2BGR))
+                                    cv2.imwrite(filename, cv2.cvtColor(image_rgb_processed, cv2.COLOR_RGB2BGR))
                                 except Exception as e:
                                     print(f"[圖片儲存] 儲存失敗: {e}")
                             
@@ -721,7 +727,7 @@ class CameraOperation:
                                     print(f"Error getting AI parameters, using defaults: {e}")
                             
                             # 執行 AI 辨識
-                            results = detect_objects(ai_model, image_rgb_flipped, conf_thres=conf_thres, imgsz=imgsz)
+                            results = detect_objects(ai_model, image_rgb_processed, conf_thres=conf_thres, imgsz=imgsz)
                             
                             # ========================================
                             # Two-Band Filter 觸發系統處理
@@ -831,9 +837,9 @@ class CameraOperation:
                             if results and hasattr(results[0], 'boxes') and len(results[0].boxes) > 0:
                                 # 在影像上繪製檢測框
                                 if draw_custom_boxes is not None:
-                                    processed_image = draw_custom_boxes(image_rgb_flipped.copy(), results)
+                                    processed_image = draw_custom_boxes(image_rgb_processed.copy(), results)
                                 else:
-                                    processed_image = image_rgb_flipped.copy()
+                                    processed_image = image_rgb_processed.copy()
                                 
                                 # 繪製邊界線
                                 processed_image = cv2.line(processed_image, (0, top_line_y), (image_width, top_line_y), (255, 255, 0), 3)  # 黃色上線
@@ -861,7 +867,7 @@ class CameraOperation:
                                         f"位置=({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f}) [{status}]\n"
                                     )
                             else:
-                                processed_image = image_rgb_flipped.copy()
+                                processed_image = image_rgb_processed.copy()
                                 # 即使沒有檢測結果，也繪製邊界線
                                 processed_image = cv2.line(processed_image, (0, top_line_y), (image_width, top_line_y), (255, 255, 0), 3)
                                 processed_image = cv2.line(processed_image, (0, bottom_line_y), (image_width, bottom_line_y), (0, 255, 255), 3)
@@ -876,7 +882,7 @@ class CameraOperation:
                             # 發送原始影像信號（用於相機控制頁面顯示）
                             if hasattr(signals, 'original_image_ready'):
                                 # 轉成 BGR 格式發送
-                                original_display = cv2.cvtColor(image_rgb_flipped, cv2.COLOR_RGB2BGR)
+                                original_display = cv2.cvtColor(image_rgb_processed, cv2.COLOR_RGB2BGR)
                                 signals.original_image_ready.emit(original_display)
     
                             # 發送文字結果信號
@@ -894,11 +900,9 @@ class CameraOperation:
                         # ========================================
                         # AI 模型未載入時的處理
                         # ========================================
-                        # 僅發送原始影像
+                        # 僅發送原始影像（不翻轉）
                         if hasattr(signals, 'original_image_ready'):
-                            # 翻轉並轉成 BGR 格式發送
-                            image_rgb_flipped = cv2.flip(image_rgb, 1)
-                            display_image = cv2.cvtColor(image_rgb_flipped, cv2.COLOR_RGB2BGR)
+                            display_image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
                             signals.original_image_ready.emit(display_image)
                         
                         if hasattr(signals, 'detection_results_ready'):
